@@ -34,14 +34,14 @@ Compared with the original research repo / earlier local pipeline, this version 
 - **Metric-Anything prior:** replaces the older monocular prior path with an in-tree MA-depthmap prior wrapper.
 - **Higher-certainty sparse anchors:** the COLMAP converter defaults to `track_length >= 3` and `reprojection_error <= 2 px`, avoiding weaker two-view/high-error points.
 - **Batch directory processing:** basename-matched RGB/depth directories can be processed in one command.
-- **Fast 512 px preview path:** batch-16 preview inference supports TensorRT, fixed-iteration CG, CUDA graph replay, and final-output representative interpolation.
+- **Fast 512 px preview path:** batch-16 preview inference supports TensorRT, fixed-iteration CG, CUDA graph replay, and final-output representative interpolation, giving about 46x higher per-image throughput than the original single-image OMNI-DC+MA demo path on the bicycle benchmark.
 - **Safer saved output:** anchor capping zeros unconstrained far-field predictions beyond `anchor_cap_factor * max(valid sparse depth)`.
 - **Release-hosted model assets:** large weights and optional native extension binaries are GitHub release assets, not git-tracked files.
 - **Smoke tests and docs:** import tests, tool docs, design notes, and optimization notes are included.
 
 ## Speed vs Original
 
-The original OMNI-DC demo path is a single-image research demo. It loads one RGB/depth pair, runs eager PyTorch, solves CG to convergence, and writes one result. OMNI-DC-MA keeps the same core depth-completion model but adds a throughput path for scene sweeps:
+The original OMNI-DC+MA path is a single-image research demo. It loads one RGB/depth pair, runs eager PyTorch, solves CG to convergence, and writes one result. OMNI-DC-MA keeps the same core depth-completion model but adds a throughput path for scene sweeps:
 
 - Batch-16 directory inference instead of one image at a time.
 - 512 px preview resizing for fast scene-wide depth proposals.
@@ -50,13 +50,16 @@ The original OMNI-DC demo path is a single-image research demo. It loads one RGB
 - CUDA graph replay to remove repeated Python/allocator overhead at fixed shapes.
 - Final-output representative interpolation for validated 512-preview exposure batches.
 
-Measured on the bicycle 512-preview batch-16 path, the retained final-rep modes process a 16-image batch in about **0.89 seconds**:
+The baseline below is the unmodified OMNI-DC+MA commit (`1e1987b`) run as a single-image demo on the bicycle frame: **2.593 s/image** steady-state, padded to `1648x2480`, with 15.53 GB peak VRAM. The retained OMNI-DC-MA preview modes run 16 images at `352x512` in about **0.89 s total**, or **0.055-0.056 s/image**, so serially processing the same 16 images with the original path would take about **41.5 s**.
 
-| Span bucket | Mode | Mean gap vs all-frame teacher | P95 gap | Batch time |
-| --- | --- | ---: | ---: | ---: |
-| low | `metric_generic16` | 0.009102 m | 0.022091 m | ~0.891 s |
-| mid | `hybrid_calibrated16` | 0.008479 m | 0.025354 m | ~0.890 s |
-| high | `metric_highspan16` | 0.011834 m | 0.025463 m | ~0.886 s |
+| Path | Images/run | Padded resolution | Time/run | Per image | Speed gain vs original OMNI-DC+MA | Mean error vs 512 all-frame teacher | P95 error |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Original OMNI-DC+MA (`1e1987b`) | 1 | `1648x2480` | 2.593 s | 2.593 s | 1.0x | n/a | n/a |
+| OMNI-DC-MA low span, `metric_generic16` | 16 | `352x512` | ~0.891 s | ~0.0557 s | ~46.6x | 0.009102 m | 0.022091 m |
+| OMNI-DC-MA mid span, `hybrid_calibrated16` | 16 | `352x512` | ~0.890 s | ~0.0556 s | ~46.6x | 0.008479 m | 0.025354 m |
+| OMNI-DC-MA high span, `metric_highspan16` | 16 | `352x512` | ~0.886 s | ~0.0554 s | ~46.8x | 0.011834 m | 0.025463 m |
+
+The speed gain compares original single-image throughput against OMNI-DC-MA preview throughput. The error columns are the final-output representative approximation error against the 512-preview all-frame teacher, not ground-truth depth error and not a full-resolution comparison to the original demo output.
 
 That path is meant for fast scene processing and preview-quality dense depth. For final per-image fidelity, use full-resolution batch-1 inference.
 

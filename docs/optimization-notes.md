@@ -21,13 +21,16 @@ These are the current optimizations carried into this repo.
 
 ## Current Measured Preview Behavior
 
-For the bicycle batch-16 512-preview path, the retained representative modes measured against the all-frame teacher were:
+For the bicycle benchmark, the unmodified OMNI-DC+MA baseline at commit `1e1987b` measured 2.593 s for one image at the original script's padded `1648x2480` resolution. The retained 512-preview representative modes run 16 images at padded `352x512`; the speed gain compares original single-image throughput against preview batch throughput.
 
-| Span bucket | Mode | Mean gap | P95 gap | Batch time |
-| --- | --- | ---: | ---: | ---: |
-| low | `metric_generic16` | 0.009102 m | 0.022091 m | ~0.891 s |
-| mid | `hybrid_calibrated16` | 0.008479 m | 0.025354 m | ~0.890 s |
-| high | `metric_highspan16` | 0.011834 m | 0.025463 m | ~0.886 s |
+| Path | Images/run | Padded resolution | Time/run | Per image | Speed gain | Mean error | P95 error |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Original OMNI-DC+MA (`1e1987b`) | 1 | `1648x2480` | 2.593 s | 2.593 s | 1.0x | n/a | n/a |
+| low, `metric_generic16` | 16 | `352x512` | ~0.891 s | ~0.0557 s | ~46.6x | 0.009102 m | 0.022091 m |
+| mid, `hybrid_calibrated16` | 16 | `352x512` | ~0.890 s | ~0.0556 s | ~46.6x | 0.008479 m | 0.025354 m |
+| high, `metric_highspan16` | 16 | `352x512` | ~0.886 s | ~0.0554 s | ~46.8x | 0.011834 m | 0.025463 m |
+
+The error columns are final-output representative approximation error against the 512-preview all-frame teacher, not ground-truth depth error or a full-resolution original-demo comparison.
 
 The practical recommendation is:
 
