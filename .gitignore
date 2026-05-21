@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+*.npy
+*.npz
+*.png
+!docs/assets/
+!docs/assets/*.png
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.exr
+*.ply
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Local environments and caches.
+.venv/
+.autotune/
+.cache/
+
+# Runtime outputs and data.
+checkpoints/
+experiments/
+outputs/
+datasets/
+data/
+release_assets/
+
+# Native build artifacts.
+build/
+dist/
+*.egg-info/
+*.pyd
+*.so
+*.obj
+*.lib
+*.exp
+build_dcn.log
+
+# TensorRT / ONNX exports.
+*.engine
+*.onnx
+*.plan

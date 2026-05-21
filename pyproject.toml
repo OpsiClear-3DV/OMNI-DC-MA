@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[project]
+name = "omni-dc-ma"
+version = "0.1.0"
+description = "Mixed-license organized OMNI-DC MA-depthmap inference build"
+readme = "README.md"
+license = { text = "Mixed license: new OMNI-DC-MA content is AGPL-3.0-only; upstream and vendored components retain their original licenses. See NOTICE.md and LICENSES/." }
+license-files = ["LICENSE", "LICENSES/*"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "numpy<2",
+    "pillow",
+    "matplotlib",
+    "scipy",
+    "opencv-python",
+    "tqdm",
+    "einops",
+    "h5py",
+    "timm",
+    "huggingface_hub",
+    "plyfile",
+]
+
+[project.optional-dependencies]
+trt = [
+    "tensorrt>=10.15,<11",
+    "onnx>=1.17",
+    "onnxsim>=0.4.36",
+    "onnxruntime>=1.20",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.15",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+    "src/model/ma_depthmap/depth_model.py",
+    "src/model/ma_depthmap/network",
+    "src/model/deformconv",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E402",
+    "E741",
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/model/**" = ["B", "SIM", "UP", "E501"]
+"src/robust_dc_protocol/**" = ["B", "SIM", "UP", "E501"]
+"src/utility.py" = ["E501"]
+
+[tool.vulture]
+min_confidence = 80
+paths = ["tools", "src/model/ma_depthmap/prior.py", "src/model/ma_depthmap/__init__.py"]
+ignore_names = ["forward", "args_main"]
+ignore_decorators = ["@torch.no_grad"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
