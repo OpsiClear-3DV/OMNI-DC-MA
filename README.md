@@ -8,7 +8,7 @@
   <img src="docs/assets/bicycle_sparse_vs_completed.png" alt="Sparse bicycle COLMAP/SfM depth anchors, original Metric-Anything point-map depth result, and completed OMNI-DC-MA depth map" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything point-map depth result, and the regenerated 512 px OMNI-DC-MA completed depth map. Both depth panels use the same Turbo color map and shared percentile scale.</em></p>
+<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything point-map depth result, and the regenerated 512 px OMNI-DC-MA completed depth map. Both depth panels use the same Turbo color map on a fixed 0-75 m metric scale.</em></p>
 
 ## What This Repo Is For
 
