@@ -135,6 +135,24 @@ def apply_anchor_cap(
     return out, threshold, n_capped
 
 
+def apply_sky_mask(depth: np.ndarray, sky: np.ndarray | None) -> tuple[np.ndarray, int]:
+    """Zero output depth wherever the prior marked sky/far-field.
+
+    ``sky`` may be bool or a soft/interpolated mask. Values > 0.5 are treated
+    as invalid far-field. Returns a copy plus the number of nonzero depth
+    pixels newly zeroed by the mask.
+    """
+    out = depth.copy()
+    if sky is None:
+        return out, 0
+    sky_mask = np.asarray(sky) > 0.5
+    if sky_mask.shape != out.shape:
+        raise ValueError(f"sky mask shape {sky_mask.shape} does not match depth shape {out.shape}")
+    newly_zeroed = int(np.count_nonzero(sky_mask & (out != 0.0)))
+    out[sky_mask] = 0.0
+    return out, newly_zeroed
+
+
 @torch.inference_mode()
 def predict_tensor(
     net: nn.Module,

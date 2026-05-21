@@ -539,8 +539,9 @@ parser.add_argument('--demo_cuda_graph', action='store_true', default=False,
 parser.add_argument('--anchor_cap_factor', type=float, default=2.0,
                     help='Zero out predicted pixels deeper than this factor x the '
                          'farthest SfM anchor (unconstrained far-field/sky). The '
-                         'raw, uncapped depth is always cached alongside as '
-                         '<stem>_raw.npy. Set <= 0 to disable.')
+                         'same prior sky/far-field mask is also applied to saved '
+                         'depth when available. The raw, uncapped depth is always '
+                         'cached alongside as <stem>_raw.npy. Set <= 0 to disable.')
 parser.add_argument('--cg_rtol', type=float, default=1e-5,
                     help='Optim-layer conjugate-gradient relative tolerance. '
                          'Default 1e-5 (converges ~183 preconditioned iters on '

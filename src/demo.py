@@ -21,7 +21,7 @@ from model.final_reps import (
     select_final_rep_indices,
     select_final_rep_mode,
 )
-from model.infer import apply_anchor_cap, load_model, load_pair, predict_tensor
+from model.infer import apply_anchor_cap, apply_sky_mask, load_model, load_pair, predict_tensor
 from model.tensor_stats import quantile_02_98_flat
 
 torch.backends.cudnn.deterministic = bool(getattr(args_config, "demo_deterministic", False))
@@ -194,7 +194,7 @@ def _prepare_pair(args, rgb_path, depth_path):
     return rgb, dep, sparse
 
 
-def _write_outputs(args, outputs, cmap, want_sky, out_dir, rgb_path, sparse, depth_raw, sky):
+def _write_outputs(args, outputs, cmap, save_sky, out_dir, rgb_path, sparse, depth_raw, sky):
     if not np.isfinite(depth_raw).all():
         raise RuntimeError(
             f"non-finite depth for {rgb_path} (CG likely diverged - a "
@@ -208,9 +208,15 @@ def _write_outputs(args, outputs, cmap, want_sky, out_dir, rgb_path, sparse, dep
     _profile_end(args, "anchor cap output", t0)
     print(f"    anchor cap @ {thr:.1f} m -> zeroed {n_capped} px "
           f"({100 * n_capped / depth_raw.size:.2f}%)")
+    t0 = _profile_begin(args)
+    depth_pred, n_sky_masked = apply_sky_mask(depth_pred, sky)
+    _profile_end(args, "sky mask output", t0)
+    if sky is not None:
+        print(f"    prior sky/far mask -> zeroed {n_sky_masked} px "
+              f"({100 * n_sky_masked / depth_raw.size:.2f}%)")
 
     stem = Path(rgb_path).stem
-    capped_differs = n_capped > 0
+    capped_differs = n_capped > 0 or n_sky_masked > 0
     if "depth" in outputs:
         t0 = _profile_begin(args)
         np.save(out_dir / f"{stem}.npy", depth_pred)
@@ -239,11 +245,12 @@ def _write_outputs(args, outputs, cmap, want_sky, out_dir, rgb_path, sparse, dep
         Image.fromarray(depth_colormap_uint8[..., :3]).save(out_dir / f"{stem}.png")
         _profile_end(args, "write vis png", t0)
 
-    if want_sky:
+    if save_sky:
         t0 = _profile_begin(args)
         from PIL import Image
 
-        Image.fromarray((sky.astype(np.uint8) * 255), mode="L").save(
+        sky_mask = np.zeros_like(depth_pred, dtype=bool) if sky is None else np.asarray(sky) > 0.5
+        Image.fromarray((sky_mask.astype(np.uint8) * 255), mode="L").save(
             out_dir / f"{Path(rgb_path).name}.png"
         )
         _profile_end(args, "write skymask png", t0)
@@ -603,7 +610,7 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
     return entry["depth"], entry["sky"]
 
 
-def _run_batch(net, args, pairs, outputs, cmap, want_sky, out_dir, start_idx, total, graph_cache):
+def _run_batch(net, args, pairs, outputs, cmap, request_sky, save_sky, out_dir, start_idx, total, graph_cache):
     import torch.nn.functional as _F
 
     prepared = []
@@ -637,7 +644,7 @@ def _run_batch(net, args, pairs, outputs, cmap, want_sky, out_dir, start_idx, to
     _profile_end(args, "batch pad/cat", t0)
 
     t0 = _profile_begin(args)
-    depth_t, sky_t = _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache)
+    depth_t, sky_t = _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, request_sky, graph_cache)
     _profile_end(args, "predict batch", t0)
 
     for i, (rgb_path, _depth_path, _rgb, _dep, sparse, h, w) in enumerate(prepared):
@@ -645,7 +652,7 @@ def _run_batch(net, args, pairs, outputs, cmap, want_sky, out_dir, start_idx, to
         depth_raw = depth_t[i, 0, :h, :w].cpu().numpy()
         sky = None if sky_t is None else sky_t[i, 0, :h, :w].cpu().numpy()
         _profile_end(args, "copy output to cpu", t0)
-        _write_outputs(args, outputs, cmap, want_sky, out_dir, rgb_path, sparse, depth_raw, sky)
+        _write_outputs(args, outputs, cmap, save_sky, out_dir, rgb_path, sparse, depth_raw, sky)
 
 
 def test(args):
@@ -667,7 +674,8 @@ def test(args):
     if not outputs:
         raise ValueError("--demo_outputs selected nothing to write")
 
-    want_sky = "skymask" in outputs
+    save_sky = "skymask" in outputs
+    request_sky = save_sky or bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
     if "vis" in outputs:
         import matplotlib.pyplot as plt
 
@@ -685,7 +693,7 @@ def test(args):
     graph_cache = {}
 
     for start in range(0, len(pairs), batch_size):
-        _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, want_sky,
+        _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, request_sky, save_sky,
                    out_dir, start + 1, len(pairs), graph_cache)
     if getattr(args, "demo_profile", False):
         _profile_print()

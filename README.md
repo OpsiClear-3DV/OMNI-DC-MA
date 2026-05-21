@@ -35,7 +35,7 @@ Compared with the original research repo / earlier local pipeline, this version 
 - **Higher-certainty sparse anchors:** the COLMAP converter defaults to `track_length >= 3` and `reprojection_error <= 2 px`, and can optionally reject anchors that disagree with a reference depth map in inverse depth.
 - **Batch directory processing:** basename-matched RGB/depth directories can be processed in one command.
 - **Fast 512 px preview path:** batch-16 preview inference supports TensorRT, fixed-iteration CG, CUDA graph replay, and final-output representative interpolation, giving about 24x higher per-image throughput than the original single-image OMNI-DC+MA path at the same 512-preview image size.
-- **Safer saved output:** anchor capping zeros unconstrained far-field predictions beyond `anchor_cap_factor * max(valid sparse depth)`.
+- **Safer saved output:** anchor capping zeros unconstrained far-field predictions beyond `anchor_cap_factor * max(valid sparse depth)`, and the MA-prior sky/far mask is applied to the saved completed depth when available.
 - **Release-hosted model assets:** large weights and optional native extension binaries are GitHub release assets, not git-tracked files.
 - **Smoke tests and docs:** import tests, tool docs, design notes, and optimization notes are included.
 
@@ -194,12 +194,12 @@ For maximum per-image fidelity, use full resolution and batch 1. For throughput 
 
 For each RGB stem:
 
-- `<stem>.npy`: capped dense metric depth.
+- `<stem>.npy`: capped dense metric depth with the prior sky/far-field mask applied when available.
 - `<stem>_raw.npy`: raw dense depth when it differs from capped output.
 - `<stem>.png`: color depth visualization.
 - `<image-name>.png`: optional sky/far-field mask when `skymask` is requested.
 
-`anchor_cap_factor` defaults to `2`, which zeros predictions farther than twice the deepest valid sparse anchor. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
+`anchor_cap_factor` defaults to `2`, which zeros predictions farther than twice the deepest valid sparse anchor. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
 
 ## Verification
 

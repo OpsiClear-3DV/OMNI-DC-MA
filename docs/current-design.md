@@ -48,4 +48,4 @@ This is a throughput optimization for sequence processing, not the default for a
 
 ## Anchor Cap
 
-The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs.
+The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The prior sky/far-field mask is also requested whenever output capping is enabled and is applied to the saved completed depth, not only to the optional `skymask` visualization.

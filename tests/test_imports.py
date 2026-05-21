@@ -55,3 +55,18 @@ def test_apply_anchor_cap():
     assert thr_off == float("inf") and n_off == 0 and np.array_equal(off, depth)
     none, thr_none, n_none = apply_anchor_cap(depth, np.zeros_like(sparse), factor=2.0)
     assert thr_none == float("inf") and n_none == 0 and np.array_equal(none, depth)
+
+
+def test_apply_sky_mask():
+    from model.infer import apply_sky_mask
+
+    depth = np.array([[1.0, 5.0, 0.0], [2.0, 50.0, 999.0]], dtype=np.float32)
+    sky = np.array([[0.0, 0.7, 1.0], [0.5, 0.49, 1.0]], dtype=np.float32)
+
+    masked, n = apply_sky_mask(depth, sky)
+    assert n == 2  # 5 and 999; already-zero sky pixel is not double-counted
+    assert masked.tolist() == [[1.0, 0.0, 0.0], [2.0, 50.0, 0.0]]
+    assert depth[0, 1] == 5.0  # original not mutated
+
+    unchanged, n_none = apply_sky_mask(depth, None)
+    assert n_none == 0 and np.array_equal(unchanged, depth)
