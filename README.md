@@ -5,10 +5,10 @@
 **TL;DR:** OMNI-DC-MA is an inference-focused depth-completion repo for turning RGB images plus sparse COLMAP/SfM depth anchors into dense metric depth maps. It is a cleaned-up, Windows/CUDA-13-ready fork of the current OMNI-DC inference path with a Metric-Anything depth prior, higher-certainty COLMAP anchor generation, TensorRT hooks, batch processing, and release-hosted model assets.
 
 <p align="center">
-  <img src="docs/assets/bicycle_sparse_ma_completed_sky10.png" alt="Sparse bicycle COLMAP/SfM depth anchors overlaid on the RGB image, COLMAP-intrinsics-scaled Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
+  <img src="docs/assets/bicycle_sparse_ma_completed_sky125.png" alt="Sparse bicycle COLMAP/SfM depth anchors overlaid on the RGB image, COLMAP-intrinsics-scaled Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors overlaid on the original RGB image, the COLMAP-intrinsics-scaled Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.0x prior sky/far mask applied. Sparse points and valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
+<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors overlaid on the original RGB image, the COLMAP-intrinsics-scaled Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.25x prior sky/far mask applied. Sparse points and valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
 
 ## What This Repo Is For
 
@@ -166,7 +166,7 @@ uv run python run_demo.py `
   --demo_depth C:\path\to\sparse_depth.npy `
   --demo_out_dir outputs\single `
   --demo_outputs depth,raw,vis `
-  --trt --anchor_cap_factor 1.0
+  --trt --anchor_cap_factor 1.25
 ```
 
 Whole-scene 512 px preview path:
@@ -186,7 +186,7 @@ uv run python run_demo.py `
   --demo_batch_size 16 --demo_max_size 512 `
   --demo_outputs depth,vis `
   --trt --capturable_inference --cg_fixed_iters 120 --demo_cuda_graph `
-  --anchor_cap_factor 1.0
+  --anchor_cap_factor 1.25
 ```
 
 For maximum per-image fidelity, use full resolution and batch 1. For throughput on scene sweeps, use the 512 px batch path.
