@@ -127,12 +127,12 @@ uv run python tools\generate_colmap_sparse_depth.py `
   --model-dir C:\path\to\scene\sparse\0 `
   --rgb-dir C:\path\to\scene\images_2 `
   --out-dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain_consistent `
-  --consistency-depth-dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain `
-  --max-inv-depth-rel-diff 0.25
+  --reference-depth-dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain `
+  --max-relative-inverse-depth-error 0.25
 ```
 
-Use `--max-inv-depth-diff` for an absolute inverse-depth threshold in `1/m`. Add `--consistency-align-scale` when the reference maps are only relatively scaled.
-By default, only the failing point observation is removed; add `--consistency-drop-point-all-views` to remove that COLMAP 3D point from every selected output view if any observation fails.
+Use `--max-inverse-depth-error` for an absolute inverse-depth threshold in `1/m`. Add `--align-reference-depth-scale` when the reference maps are only relatively scaled.
+By default, only the failing point observation is removed; add `--drop-inconsistent-points` to remove that COLMAP 3D point from every selected output view if any observation fails.
 
 Use `--no-quality-filter` only for comparison/debugging.
 

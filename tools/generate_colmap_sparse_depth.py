@@ -87,14 +87,14 @@ def _consistency_filter_label(args: argparse.Namespace) -> str:
         return "off"
     checks: list[str] = []
     if args.max_inv_depth_diff > 0:
-        checks.append(f"abs_inv_diff<={args.max_inv_depth_diff:g} 1/m")
+        checks.append(f"absolute inverse-depth error <= {args.max_inv_depth_diff:g} 1/m")
     if args.max_inv_depth_rel_diff > 0:
-        checks.append(f"rel_inv_diff<={args.max_inv_depth_rel_diff:g}")
-    align = "median inverse-depth scale aligned" if args.consistency_align_scale else "no scale alignment"
+        checks.append(f"relative inverse-depth error <= {args.max_inv_depth_rel_diff:g}")
+    align = "reference scale aligned" if args.consistency_align_scale else "no scale alignment"
     mode = (
-        "drop failing COLMAP points in all selected views"
+        "drop whole inconsistent COLMAP points"
         if args.consistency_drop_point_all_views
-        else "drop failing observations only"
+        else "drop inconsistent observations only"
     )
     return f"{', '.join(checks)} against {args.consistency_depth_dir} ({align}; {mode})"
 
@@ -416,84 +416,132 @@ def generate(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", required=True, help="COLMAP sparse model directory, e.g. sparse/0")
-    parser.add_argument("--rgb-dir", required=True, help="Directory containing RGB images to match by stem")
-    parser.add_argument("--out-dir", required=True, help="Output directory for .npy sparse depth maps")
-    parser.add_argument("--model-ext", default="", choices=("", ".bin", ".txt"), help="COLMAP model format")
-    parser.add_argument(
+    io_group = parser.add_argument_group("input/output")
+    io_group.add_argument("--model-dir", required=True, help="COLMAP sparse model directory, e.g. sparse/0")
+    io_group.add_argument("--rgb-dir", required=True, help="Directory containing RGB images to match by stem")
+    io_group.add_argument("--out-dir", required=True, help="Output directory for .npy sparse depth maps")
+    io_group.add_argument("--model-ext", default="", choices=("", ".bin", ".txt"), help="COLMAP model format")
+    io_group.add_argument(
         "--image-ext",
         action="append",
         help="Image extension to include. May be repeated or comma-separated. Defaults to common JPG/PNG forms.",
     )
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .npy outputs")
-    parser.add_argument("--only-stem", action="append", help="Only process matching RGB stems. May be repeated.")
-    parser.add_argument("--limit", type=int, default=0, help="Stop after writing this many files. 0 means no limit.")
-    parser.add_argument(
+    io_group.add_argument("--overwrite", action="store_true", help="Overwrite existing .npy outputs")
+    io_group.add_argument("--only-stem", action="append", help="Only process matching RGB stems. May be repeated.")
+    io_group.add_argument("--limit", type=int, default=0, help="Stop after writing this many files. 0 means no limit.")
+
+    quality_group = parser.add_argument_group("COLMAP point quality filter")
+    quality_group.add_argument(
         "--min-track-length",
         type=int,
         default=DEFAULT_MIN_TRACK_LENGTH,
         help="Require COLMAP 3D points to be observed in at least this many images. Default: %(default)s.",
     )
-    parser.add_argument(
+    quality_group.add_argument(
         "--max-reproj-error",
         type=float,
         default=DEFAULT_MAX_REPROJ_ERROR,
         help="Require COLMAP point reprojection error at or below this many pixels. Default: %(default)s.",
     )
-    parser.add_argument(
+    quality_group.add_argument(
         "--no-quality-filter",
         action="store_true",
         help="Disable the default certain-point filter. Intended only for comparison/debugging.",
     )
-    parser.add_argument(
+
+    consistency_group = parser.add_argument_group("SfM vs reference-depth filter")
+    consistency_group.add_argument(
+        "--reference-depth-dir",
+        dest="consistency_depth_dir",
+        metavar="DIR",
+        help="Directory of reference dense depth .npy maps matched by RGB stem. "
+             "Use with an inverse-depth error threshold to reject inconsistent SfM anchors.",
+    )
+    consistency_group.add_argument(
         "--consistency-depth-dir",
-        help="Optional directory of reference dense depth .npy maps matched by RGB stem. "
-             "When paired with an inverse-depth threshold, projected SfM points that disagree are rejected.",
+        dest="consistency_depth_dir",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument(
+    consistency_group.add_argument(
+        "--max-inverse-depth-error",
+        dest="max_inv_depth_diff",
+        metavar="ERROR_1_PER_M",
+        type=float,
+        default=0.0,
+        help="Reject anchors with absolute inverse-depth error above this threshold in 1/m. "
+             "Requires --reference-depth-dir. 0 disables this check.",
+    )
+    consistency_group.add_argument(
         "--max-inv-depth-diff",
+        dest="max_inv_depth_diff",
         type=float,
-        default=0.0,
-        help="Reject points with absolute inverse-depth disagreement above this threshold in 1/m. "
-             "Requires --consistency-depth-dir. 0 disables this check.",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--max-inv-depth-rel-diff",
+    consistency_group.add_argument(
+        "--max-relative-inverse-depth-error",
+        dest="max_inv_depth_rel_diff",
+        metavar="REL_ERROR",
         type=float,
         default=0.0,
-        help="Reject points with symmetric relative inverse-depth disagreement above this threshold. "
+        help="Reject anchors with symmetric relative inverse-depth error above this threshold. "
              "For example, 0.25 rejects points differing by more than about 25%%. "
-             "Requires --consistency-depth-dir. 0 disables this check.",
+             "Requires --reference-depth-dir. 0 disables this check.",
     )
-    parser.add_argument(
-        "--consistency-align-scale",
+    consistency_group.add_argument(
+        "--max-inv-depth-rel-diff",
+        dest="max_inv_depth_rel_diff",
+        type=float,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    consistency_group.add_argument(
+        "--align-reference-depth-scale",
+        dest="consistency_align_scale",
         action="store_true",
-        help="Median-align reference inverse depths to SfM inverse depths per image before consistency checks. "
+        default=False,
+        help="Median-align reference inverse depths to SfM inverse depths per image before checking errors. "
              "Useful when the reference depth maps are only relatively scaled.",
     )
-    parser.add_argument(
+    consistency_group.add_argument(
+        "--consistency-align-scale",
+        dest="consistency_align_scale",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    consistency_group.add_argument(
+        "--drop-inconsistent-points",
+        dest="consistency_drop_point_all_views",
+        action="store_true",
+        default=False,
+        help="If any observation of a COLMAP 3D point fails the reference-depth check, reject that 3D point "
+             "in all selected output views. Default removes only failing observations.",
+    )
+    consistency_group.add_argument(
         "--consistency-drop-point-all-views",
         "--consistency-remove-point-all-views",
         action="store_true",
         dest="consistency_drop_point_all_views",
-        help="If any observation of a COLMAP 3D point fails the depth consistency check, reject that point in all "
-             "selected output views. By default, only the failing observation is removed.",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--verbose", action="store_true", help="Print one line per written image")
+    io_group.add_argument("--verbose", action="store_true", help="Print one line per written image")
     args = parser.parse_args()
     if args.min_track_length < 1:
         raise ValueError("--min-track-length must be >= 1")
     if args.max_reproj_error <= 0:
         raise ValueError("--max-reproj-error must be > 0")
     if args.max_inv_depth_diff < 0:
-        raise ValueError("--max-inv-depth-diff must be >= 0")
+        raise ValueError("--max-inverse-depth-error must be >= 0")
     if args.max_inv_depth_rel_diff < 0:
-        raise ValueError("--max-inv-depth-rel-diff must be >= 0")
+        raise ValueError("--max-relative-inverse-depth-error must be >= 0")
     if (args.max_inv_depth_diff > 0 or args.max_inv_depth_rel_diff > 0) and not args.consistency_depth_dir:
-        raise ValueError("inverse-depth consistency thresholds require --consistency-depth-dir")
+        raise ValueError("inverse-depth error thresholds require --reference-depth-dir")
     if args.consistency_drop_point_all_views and not _consistency_enabled(args):
         raise ValueError(
-            "--consistency-drop-point-all-views requires --consistency-depth-dir and an inverse-depth threshold"
+            "--drop-inconsistent-points requires --reference-depth-dir and an inverse-depth error threshold"
         )
     generate(args)
 
