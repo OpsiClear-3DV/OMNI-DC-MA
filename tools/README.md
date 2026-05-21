@@ -30,11 +30,31 @@ For a one-frame smoke check, add `--only-stem _DSC8679 --limit 1 --verbose`.
 
 ## TensorRT Export
 
+- `build_trt_engines.ps1`: one-command local build wrapper for the runtime TensorRT engines.
 - `export_prior_trt.py`: MA-depthmap patch encoder engine.
 - `export_full_prior_512_trt.py`: full 352x512 prior engine.
 - `export_backbone_trt.py`: fixed-shape backbone decoder engines.
 
-Engines are written under `checkpoints/trt/`, which is ignored by git.
+Build the retained 512-preview engine set from the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build_trt_engines.ps1
+```
+
+The default script builds:
+
+- `prior_dinov3h_fp16.engine`
+- `prior_full_352x512_fp16.engine`
+- batch-16 and batch-5 `dec6` through `dec3` decoder engines for the 512-preview path.
+
+Useful switches:
+
+- `-IncludeFullResolutionBackbone`: also build batch-1 full-resolution `dec6` through `dec2` engines.
+- `-SkipPatchPrior`: skip the large dynamic patch-prior engine when you only need the fixed 352x512 path.
+- `-Stage engine`: rebuild engines from existing ONNX files.
+- `-DryRun`: print the export commands without running them.
+
+Engines are written under `checkpoints/trt/`, which is ignored by git. They are not release assets because TensorRT engines are specific to the local GPU, CUDA, TensorRT, driver, and exported input shapes.
 
 ## DCN
 

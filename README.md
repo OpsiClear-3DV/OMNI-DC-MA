@@ -71,6 +71,7 @@ That path is meant for fast scene processing and preview-quality dense depth. Fo
 | `src/demo.py` | Batching, 512 px resizing, CUDA graph handling, and output writing. |
 | `src/model/` | OGNIDC, MA-depthmap prior, optimization layer, TensorRT hooks, final-rep interpolation. |
 | `tools/generate_colmap_sparse_depth.py` | Converts COLMAP sparse models into per-image sparse depth `.npy` inputs. |
+| `tools/build_trt_engines.ps1` | Local TensorRT engine build wrapper for the retained prior and decoder engines. |
 | `tools/export_*_trt.py` | TensorRT export helpers. |
 | `tests/` | Import smoke tests and optional local bicycle regression. |
 | `docs/` | Current design, optimization notes, release notes, and README image asset. |
@@ -101,6 +102,14 @@ The repo loads OMNI-DC weights from HuggingFace by default. Pinned assets are al
 ```powershell
 gh release download v0.1.0 -R OpsiClear-3DV/OMNI-DC-MA --dir release_assets
 ```
+
+TensorRT engines are intentionally not shipped in git or the release because they are tied to the local GPU, TensorRT version, CUDA version, driver, and fixed input shapes. Build them on the target machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build_trt_engines.ps1
+```
+
+The default build creates the dynamic MA-depthmap patch-prior engine, the fixed 352x512 prior engine, and the retained batch-16/batch-5 512-preview decoder engines under `checkpoints\trt`. Add `-IncludeFullResolutionBackbone` to also build the full-resolution batch-1 decoder engines, or `-DryRun` to print the commands without building.
 
 Large model files, TensorRT engines, datasets, predictions, and visualizations are ignored by git.
 
