@@ -199,7 +199,7 @@ For each RGB stem:
 - `<stem>.png`: color depth visualization.
 - `<image-name>.png`: optional sky/far-field mask when `skymask` is requested.
 
-`anchor_cap_factor` defaults to `2`, which zeros predictions farther than twice the deepest valid sparse anchor. The bicycle examples use `1.0` to remove more open-sky pixels. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
+`anchor_cap_factor` defaults to `1.0`, which zeros predictions farther than the deepest valid sparse anchor. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
 
 ## Verification
 

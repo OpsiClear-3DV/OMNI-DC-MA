@@ -536,7 +536,7 @@ parser.add_argument('--demo_cuda_graph', action='store_true', default=False,
                     help='Replay fixed-shape demo batches through a CUDA Graph. '
                          'Requires --capturable_inference and --cg_fixed_iters; '
                          'best for many same-resolution batches, not one-off runs.')
-parser.add_argument('--anchor_cap_factor', type=float, default=2.0,
+parser.add_argument('--anchor_cap_factor', type=float, default=1.0,
                     help='Zero out predicted pixels deeper than this factor x the '
                          'farthest SfM anchor (unconstrained far-field/sky). The '
                          'same prior sky/far-field mask is also applied to saved '
