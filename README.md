@@ -132,6 +132,7 @@ uv run python tools\generate_colmap_sparse_depth.py `
 ```
 
 Use `--max-inv-depth-diff` for an absolute inverse-depth threshold in `1/m`. Add `--consistency-align-scale` when the reference maps are only relatively scaled.
+By default, only the failing point observation is removed; add `--consistency-drop-point-all-views` to remove that COLMAP 3D point from every selected output view if any observation fails.
 
 Use `--no-quality-filter` only for comparison/debugging.
 

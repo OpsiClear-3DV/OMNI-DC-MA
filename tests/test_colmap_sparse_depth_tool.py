@@ -20,6 +20,10 @@ def _args(**overrides):
         "max_inv_depth_diff": 0.0,
         "max_inv_depth_rel_diff": 0.25,
         "consistency_align_scale": False,
+        "consistency_drop_point_all_views": False,
+        "no_quality_filter": False,
+        "min_track_length": 3,
+        "max_reproj_error": 2.0,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -64,3 +68,50 @@ def test_depth_map_sampling_supports_reference_maps_at_different_resolution():
     sampled = tool._sample_depth_map(depth_map, xys, source_width=4, source_height=4)
 
     assert sampled.tolist() == [1.0, 4.0, 2.0]
+
+
+def test_global_consistency_reject_removes_point_from_other_views(tmp_path):
+    tool = _load_tool()
+    np.save(tmp_path / "a.npy", np.array([[2.0, 2.0]], dtype=np.float32))
+    np.save(tmp_path / "b.npy", np.array([[4.0, 4.0]], dtype=np.float32))
+
+    args = _args(
+        consistency_depth_dir=str(tmp_path),
+        max_inv_depth_rel_diff=0.25,
+        consistency_drop_point_all_views=True,
+    )
+    camera = SimpleNamespace(width=2, height=1)
+    cameras = {1: camera}
+    points3d = {
+        1: SimpleNamespace(xyz=np.array([0.0, 0.0, 2.0]), image_ids=np.arange(3), error=0.1),
+        2: SimpleNamespace(xyz=np.array([0.0, 0.0, 4.0]), image_ids=np.arange(3), error=0.1),
+    }
+    image_a = SimpleNamespace(
+        name="a.JPG",
+        camera_id=1,
+        point3D_ids=np.array([1, 2]),
+        xys=np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float64),
+        qvec=np.array([1.0, 0.0, 0.0, 0.0]),
+        tvec=np.array([0.0, 0.0, 0.0]),
+    )
+    image_b = SimpleNamespace(
+        name="b.JPG",
+        camera_id=1,
+        point3D_ids=np.array([2]),
+        xys=np.array([[0.0, 0.0]], dtype=np.float64),
+        qvec=np.array([1.0, 0.0, 0.0, 0.0]),
+        tvec=np.array([0.0, 0.0, 0.0]),
+    )
+
+    global_rejects = tool._find_global_consistency_rejects(
+        [(image_a, "a", tmp_path / "a_out.npy"), (image_b, "b", tmp_path / "b_out.npy")],
+        cameras,
+        points3d,
+        args,
+    )
+    depth_b, stats_b = tool._depth_for_image(image_b, "b", camera, points3d, args, global_rejects)
+
+    assert global_rejects == {2}
+    assert stats_b["rejected_consistency"] == 1
+    assert stats_b["anchors"] == 0
+    assert depth_b.tolist() == [[0.0, 0.0]]

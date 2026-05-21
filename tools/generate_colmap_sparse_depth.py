@@ -91,7 +91,12 @@ def _consistency_filter_label(args: argparse.Namespace) -> str:
     if args.max_inv_depth_rel_diff > 0:
         checks.append(f"rel_inv_diff<={args.max_inv_depth_rel_diff:g}")
     align = "median inverse-depth scale aligned" if args.consistency_align_scale else "no scale alignment"
-    return f"{', '.join(checks)} against {args.consistency_depth_dir} ({align})"
+    mode = (
+        "drop failing COLMAP points in all selected views"
+        if args.consistency_drop_point_all_views
+        else "drop failing observations only"
+    )
+    return f"{', '.join(checks)} against {args.consistency_depth_dir} ({align}; {mode})"
 
 
 def _normalize_depth_map(array: np.ndarray, path: Path) -> np.ndarray:
@@ -170,11 +175,100 @@ def _inverse_depth_consistency_mask(
     return keep, invalid_reference
 
 
-def _depth_for_image(image, stem: str, camera, points3d, args: argparse.Namespace) -> tuple[np.ndarray, dict[str, int]]:
+def _project_consistency_candidates(
+    image,
+    camera,
+    points3d,
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, int]]:
+    stats = {
+        "track_refs": 0,
+        "missing_points": 0,
+        "rejected_quality": 0,
+        "kept_points": 0,
+        "outside_or_behind": 0,
+    }
+    point_ids = np.asarray(image.point3D_ids)
+    valid_track = point_ids != -1
+    stats["track_refs"] = int(valid_track.sum())
+    if not valid_track.any():
+        empty_ids = np.asarray([], dtype=np.int64)
+        empty_xy = np.empty((0, 2), dtype=np.float64)
+        empty_z = np.asarray([], dtype=np.float64)
+        empty_inside = np.asarray([], dtype=bool)
+        return empty_ids, empty_xy, empty_z, empty_inside, stats
+
+    ids = point_ids[valid_track]
+    xys = np.asarray(image.xys, dtype=np.float64)[valid_track]
+    xyz = []
+    keep = []
+    kept_point_ids: list[int] = []
+    for idx, point_id in enumerate(ids):
+        point = points3d.get(int(point_id))
+        if point is None:
+            stats["missing_points"] += 1
+            continue
+        if not _point_is_certain(point, args):
+            stats["rejected_quality"] += 1
+            continue
+        xyz.append(point.xyz)
+        keep.append(idx)
+        kept_point_ids.append(int(point_id))
+    stats["kept_points"] = len(xyz)
+    if not xyz:
+        empty_ids = np.asarray([], dtype=np.int64)
+        empty_xy = np.empty((0, 2), dtype=np.float64)
+        empty_z = np.asarray([], dtype=np.float64)
+        empty_inside = np.asarray([], dtype=bool)
+        return empty_ids, empty_xy, empty_z, empty_inside, stats
+
+    xyz_arr = np.asarray(xyz, dtype=np.float64)
+    xys = xys[np.asarray(keep, dtype=np.int64)]
+    rot = qvec2rotmat(image.qvec)
+    cam_xyz = xyz_arr @ rot.T + np.asarray(image.tvec, dtype=np.float64)
+    z = cam_xyz[:, 2]
+
+    width = int(camera.width)
+    height = int(camera.height)
+    xs = np.rint(xys[:, 0]).astype(np.int64)
+    ys = np.rint(xys[:, 1]).astype(np.int64)
+    inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height) & (z > 0)
+    stats["outside_or_behind"] = int(len(inside) - int(inside.sum()))
+    return np.asarray(kept_point_ids, dtype=np.int64), xys, z, inside, stats
+
+
+def _find_global_consistency_rejects(
+    work_items: list[tuple[object, str, Path]],
+    cameras,
+    points3d,
+    args: argparse.Namespace,
+) -> set[int]:
+    rejected: set[int] = set()
+    for image, stem, _out_path in work_items:
+        camera = cameras[image.camera_id]
+        point_ids, xys, z, inside, _stats = _project_consistency_candidates(image, camera, points3d, args)
+        if not inside.any():
+            continue
+        consistency_depth = _load_consistency_depth(stem, args)
+        inside_indices = np.flatnonzero(inside)
+        reference_depth = _sample_depth_map(consistency_depth, xys[inside], int(camera.width), int(camera.height))
+        consistency_keep, _invalid_reference = _inverse_depth_consistency_mask(z[inside], reference_depth, args)
+        rejected.update(int(point_id) for point_id in point_ids[inside_indices[~consistency_keep]])
+    return rejected
+
+
+def _depth_for_image(
+    image,
+    stem: str,
+    camera,
+    points3d,
+    args: argparse.Namespace,
+    global_consistency_rejects: set[int] | None = None,
+) -> tuple[np.ndarray, dict[str, int]]:
     height = int(camera.height)
     width = int(camera.width)
     depth = np.full((height, width), np.inf, dtype=np.float32)
-    consistency_depth = _load_consistency_depth(stem, args)
+    consistency_depth = None if global_consistency_rejects is not None else _load_consistency_depth(stem, args)
     stats = {
         "track_refs": 0,
         "missing_points": 0,
@@ -187,42 +281,28 @@ def _depth_for_image(image, stem: str, camera, points3d, args: argparse.Namespac
         "anchors": 0,
     }
 
-    point_ids = np.asarray(image.point3D_ids)
-    valid_track = point_ids != -1
-    stats["track_refs"] = int(valid_track.sum())
-    if not valid_track.any():
+    point_ids, xys, z, inside, candidate_stats = _project_consistency_candidates(
+        image,
+        camera,
+        points3d,
+        args,
+    )
+    for key, value in candidate_stats.items():
+        stats[key] = value
+    if len(point_ids) == 0:
         depth[~np.isfinite(depth)] = 0.0
         return depth, stats
-
-    ids = point_ids[valid_track]
-    xys = np.asarray(image.xys, dtype=np.float64)[valid_track]
-    xyz = []
-    keep = []
-    for idx, point_id in enumerate(ids):
-        point = points3d.get(int(point_id))
-        if point is None:
-            stats["missing_points"] += 1
-            continue
-        if not _point_is_certain(point, args):
-            stats["rejected_quality"] += 1
-            continue
-        xyz.append(point.xyz)
-        keep.append(idx)
-    stats["kept_points"] = len(xyz)
-    if not xyz:
-        depth[~np.isfinite(depth)] = 0.0
-        return depth, stats
-
-    xyz_arr = np.asarray(xyz, dtype=np.float64)
-    xys = xys[np.asarray(keep, dtype=np.int64)]
-    rot = qvec2rotmat(image.qvec)
-    cam_xyz = xyz_arr @ rot.T + np.asarray(image.tvec, dtype=np.float64)
-    z = cam_xyz[:, 2]
 
     xs = np.rint(xys[:, 0]).astype(np.int64)
     ys = np.rint(xys[:, 1]).astype(np.int64)
-    inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height) & (z > 0)
-    stats["outside_or_behind"] = int(len(inside) - int(inside.sum()))
+    if global_consistency_rejects is not None and inside.any():
+        inside_indices = np.flatnonzero(inside)
+        global_keep = np.asarray(
+            [int(point_id) not in global_consistency_rejects for point_id in point_ids[inside]],
+            dtype=bool,
+        )
+        stats["rejected_consistency"] = int((~global_keep).sum())
+        inside[inside_indices[~global_keep]] = False
     if consistency_depth is not None and inside.any():
         inside_indices = np.flatnonzero(inside)
         reference_depth = _sample_depth_map(consistency_depth, xys[inside], width, height)
@@ -259,6 +339,7 @@ def generate(args: argparse.Namespace) -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     only_stems = _parse_stems(args.only_stem)
+    work_items: list[tuple[object, str, Path]] = []
     written = 0
     skipped = 0
     valid_pixels = 0
@@ -289,9 +370,18 @@ def generate(args: argparse.Namespace) -> None:
         if out_path.exists() and not args.overwrite:
             skipped += 1
             continue
+        work_items.append((image, stem, out_path))
+        if args.limit and len(work_items) >= args.limit:
+            break
 
+    global_consistency_rejects = None
+    if args.consistency_drop_point_all_views:
+        global_consistency_rejects = _find_global_consistency_rejects(work_items, cameras, points3d, args)
+        print(f"global consistency rejected COLMAP points: {len(global_consistency_rejects)}")
+
+    for image, stem, out_path in work_items:
         camera = cameras[image.camera_id]
-        depth, stats = _depth_for_image(image, stem, camera, points3d, args)
+        depth, stats = _depth_for_image(image, stem, camera, points3d, args, global_consistency_rejects)
         for key, value in stats.items():
             total_stats[key] += value
         np.save(out_path, depth.astype(np.float32, copy=False))
@@ -305,8 +395,6 @@ def generate(args: argparse.Namespace) -> None:
                 f"quality_rejected={stats['rejected_quality']}, "
                 f"consistency_rejected={stats['rejected_consistency']})"
             )
-        if args.limit and written >= args.limit:
-            break
 
     print(
         f"wrote {written} sparse depth maps to {out_dir} "
@@ -322,6 +410,8 @@ def generate(args: argparse.Namespace) -> None:
         f"projected={total_stats['projected']}, "
         f"anchors={total_stats['anchors']}"
     )
+    if global_consistency_rejects is not None:
+        print(f"global consistency rejected unique points: {len(global_consistency_rejects)}")
 
 
 def main() -> None:
@@ -381,6 +471,14 @@ def main() -> None:
         help="Median-align reference inverse depths to SfM inverse depths per image before consistency checks. "
              "Useful when the reference depth maps are only relatively scaled.",
     )
+    parser.add_argument(
+        "--consistency-drop-point-all-views",
+        "--consistency-remove-point-all-views",
+        action="store_true",
+        dest="consistency_drop_point_all_views",
+        help="If any observation of a COLMAP 3D point fails the depth consistency check, reject that point in all "
+             "selected output views. By default, only the failing observation is removed.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print one line per written image")
     args = parser.parse_args()
     if args.min_track_length < 1:
@@ -393,6 +491,10 @@ def main() -> None:
         raise ValueError("--max-inv-depth-rel-diff must be >= 0")
     if (args.max_inv_depth_diff > 0 or args.max_inv_depth_rel_diff > 0) and not args.consistency_depth_dir:
         raise ValueError("inverse-depth consistency thresholds require --consistency-depth-dir")
+    if args.consistency_drop_point_all_views and not _consistency_enabled(args):
+        raise ValueError(
+            "--consistency-drop-point-all-views requires --consistency-depth-dir and an inverse-depth threshold"
+        )
     generate(args)
 
 
