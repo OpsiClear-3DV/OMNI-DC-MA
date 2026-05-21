@@ -8,7 +8,7 @@
   <img src="docs/assets/bicycle_sparse_vs_completed.png" alt="Sparse bicycle COLMAP/SfM depth anchors, original Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the prior sky/far mask applied. Valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
+<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.5x prior sky/far mask applied. Valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
 
 ## What This Repo Is For
 
@@ -165,7 +165,7 @@ uv run python run_demo.py `
   --demo_depth C:\path\to\sparse_depth.npy `
   --demo_out_dir outputs\single `
   --demo_outputs depth,raw,vis `
-  --trt --anchor_cap_factor 2
+  --trt --anchor_cap_factor 1.5
 ```
 
 Whole-scene 512 px preview path:
@@ -185,7 +185,7 @@ uv run python run_demo.py `
   --demo_batch_size 16 --demo_max_size 512 `
   --demo_outputs depth,vis `
   --trt --capturable_inference --cg_fixed_iters 120 --demo_cuda_graph `
-  --anchor_cap_factor 2
+  --anchor_cap_factor 1.5
 ```
 
 For maximum per-image fidelity, use full resolution and batch 1. For throughput on scene sweeps, use the 512 px batch path.
@@ -199,7 +199,7 @@ For each RGB stem:
 - `<stem>.png`: color depth visualization.
 - `<image-name>.png`: optional sky/far-field mask when `skymask` is requested.
 
-`anchor_cap_factor` defaults to `2`, which zeros predictions farther than twice the deepest valid sparse anchor. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
+`anchor_cap_factor` defaults to `2`, which zeros predictions farther than twice the deepest valid sparse anchor. The bicycle examples use `1.5` to remove more open-sky pixels. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
 
 ## Verification
 
