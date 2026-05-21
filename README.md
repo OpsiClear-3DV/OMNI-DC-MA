@@ -220,6 +220,7 @@ See [docs/optimization-notes.md](docs/optimization-notes.md) for benchmark setup
 | `run_demo.py` | Repo-root inference launcher. |
 | `src/demo.py` | Pair resolution, batching, resizing, CUDA graph handling, output writing. |
 | `src/model/` | OGNIDC model, MA prior wrapper, optimization layer, TensorRT hooks. |
+| `src/colmap_utils/` | Reusable COLMAP IO, filtering, sparse-depth, and point-editing helpers. |
 | `tools/generate_colmap_sparse_depth.py` | COLMAP-to-sparse-depth converter. |
 | `tools/build_trt_engines.ps1` | Local TensorRT engine build wrapper. |
 | `docs/` | Design notes, optimization notes, release notes, README assets. |
@@ -229,7 +230,7 @@ See [docs/optimization-notes.md](docs/optimization-notes.md) for benchmark setup
 
 ```powershell
 uv run ruff check run_demo.py src\demo.py src\config.py src\model\infer.py src\model\colmap_intrinsics.py src\model\final_reps.py tools tests
-uv run pytest tests\test_imports.py tests\test_colmap_intrinsics.py tests\test_colmap_mask_output.py tests\test_colmap_sparse_depth_tool.py
+uv run pytest tests\test_imports.py tests\test_colmap_intrinsics.py tests\test_colmap_mask_output.py tests\test_colmap_sparse_depth_tool.py tests\test_colmap_utils_editing.py
 ```
 
 The bicycle end-to-end regression is optional and gated on local CUDA, weights, and the local bicycle dataset path.
