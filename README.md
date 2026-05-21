@@ -39,6 +39,27 @@ Compared with the original research repo / earlier local pipeline, this version 
 - **Release-hosted model assets:** large weights and optional native extension binaries are GitHub release assets, not git-tracked files.
 - **Smoke tests and docs:** import tests, tool docs, design notes, and optimization notes are included.
 
+## Speed vs Original
+
+The original OMNI-DC demo path is a single-image research demo. It loads one RGB/depth pair, runs eager PyTorch, solves CG to convergence, and writes one result. OMNI-DC-MA keeps the same core depth-completion model but adds a throughput path for scene sweeps:
+
+- Batch-16 directory inference instead of one image at a time.
+- 512 px preview resizing for fast scene-wide depth proposals.
+- TensorRT engines for the MA-depthmap prior and backbone decoder subgraphs.
+- Fixed-iteration capturable CG (`--cg_fixed_iters 120`) instead of variable convergence loops.
+- CUDA graph replay to remove repeated Python/allocator overhead at fixed shapes.
+- Final-output representative interpolation for validated 512-preview exposure batches.
+
+Measured on the bicycle 512-preview batch-16 path, the retained final-rep modes process a 16-image batch in about **0.89 seconds**:
+
+| Span bucket | Mode | Mean gap vs all-frame teacher | P95 gap | Batch time |
+| --- | --- | ---: | ---: | ---: |
+| low | `metric_generic16` | 0.009102 m | 0.022091 m | ~0.891 s |
+| mid | `hybrid_calibrated16` | 0.008479 m | 0.025354 m | ~0.890 s |
+| high | `metric_highspan16` | 0.011834 m | 0.025463 m | ~0.886 s |
+
+That path is meant for fast scene processing and preview-quality dense depth. For final per-image fidelity, use full-resolution batch-1 inference.
+
 ## Repository Map
 
 | Path | Purpose |
