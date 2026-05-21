@@ -5,7 +5,7 @@
 **TL;DR:** OMNI-DC-MA is an inference-focused depth-completion repo for turning RGB images plus sparse COLMAP/SfM depth anchors into dense metric depth maps. It is a cleaned-up, Windows/CUDA-13-ready fork of the current OMNI-DC inference path with a Metric-Anything depth prior, higher-certainty COLMAP anchor generation, TensorRT hooks, batch processing, and release-hosted model assets.
 
 <p align="center">
-  <img src="docs/assets/bicycle_sparse_vs_completed.png" alt="Sparse bicycle COLMAP/SfM depth anchors, original Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
+  <img src="docs/assets/bicycle_sparse_ma_completed_sky15.png" alt="Sparse bicycle COLMAP/SfM depth anchors, original Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
 </p>
 
 <p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.5x prior sky/far mask applied. Valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
