@@ -276,6 +276,16 @@ class TrtFullPrior512(nn.Module):
             self._failed = True
             return self._eager_depth(x, f_px)
 
+        # The fixed 352x512 engine was exported with the legacy MA focal
+        # f_px=0.6*512. MA metric depth is linear in focal length, so rescale
+        # the metric output for runtime COLMAP intrinsics instead of rebuilding
+        # one engine per camera.
+        f = torch.as_tensor(f_px, device=depth.device, dtype=depth.dtype)
+        if f.ndim == 0:
+            f = f.reshape(1)
+        f = f.reshape(-1, 1, 1)
+        depth = depth * (f / (0.6 * self.input_hw[1]))
+
         if not self._checked:
             self._checked = True
             ref = self._eager_depth(x, f_px).float()

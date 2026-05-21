@@ -488,6 +488,11 @@ parser.add_argument('--demo_rgb_dir', type=str, default=None,
                     help='Directory of RGB images (batch mode)')
 parser.add_argument('--demo_depth_dir', type=str, default=None,
                     help='Directory of sparse depth .npy files (basename stem matched)')
+parser.add_argument('--demo_colmap_model_dir', type=str, default='auto',
+                    help='COLMAP sparse model directory containing cameras/images '
+                         '(.bin or .txt) for MA metric focal scaling. Default '
+                         '"auto" searches near the RGB/depth inputs; use '
+                         '"none" to keep the legacy 0.6*width focal fallback.')
 parser.add_argument('--demo_out_dir', type=str, default='../experiments/demo',
                     help='Output directory for the demo artifacts')
 parser.add_argument('--demo_batch_size', type=int, default=1,

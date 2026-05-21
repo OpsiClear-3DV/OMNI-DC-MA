@@ -161,6 +161,7 @@ def predict_tensor(
     num_resolution: int,
     return_sky_mask: bool = False,
     mono_dep: torch.Tensor | None = None,
+    f_px: float | torch.Tensor | None = None,
 ):
     """Run OGNIDC and keep the cropped output on the input device.
 
@@ -177,6 +178,9 @@ def predict_tensor(
         mono_dep: optional precomputed mono-prior conditioning channel,
             already normalized the same way OGNIDC does internally. When
             provided, the expensive MA-depthmap prior is skipped.
+        f_px: optional per-sample focal length in pixels for MA metric scaling.
+            If predict_tensor pads the input width, this value is scaled to the
+            padded tensor width before calling the prior.
 
     Returns:
         (H, W) float32 dense depth — or, if return_sky_mask, the tuple
@@ -184,6 +188,18 @@ def predict_tensor(
         was applied / scene fully anchored).
     """
     _, _, H, W = rgb.shape
+    B = rgb.shape[0]
+    f_px_t = None
+    if f_px is not None:
+        f_px_t = torch.as_tensor(f_px, device=rgb.device, dtype=torch.float32)
+        if f_px_t.ndim == 0:
+            f_px_t = f_px_t.expand(B)
+        else:
+            f_px_t = f_px_t.reshape(-1)
+            if f_px_t.numel() == 1 and B > 1:
+                f_px_t = f_px_t.expand(B)
+        if f_px_t.numel() != B:
+            raise ValueError(f"f_px has {f_px_t.numel()} values for batch size {B}")
     diviser = int(4 * 2 ** (num_resolution - 1))
     H_pad = (-H) % diviser
     W_pad = (-W) % diviser
@@ -192,6 +208,8 @@ def predict_tensor(
         dep = torch.nn.functional.pad(dep, (0, W_pad, 0, H_pad))
         if mono_dep is not None:
             mono_dep = torch.nn.functional.pad(mono_dep, (0, W_pad, 0, H_pad))
+        if f_px_t is not None and W_pad:
+            f_px_t = f_px_t * ((W + W_pad) / W)
 
     sample = {
         "rgb": rgb,
@@ -201,6 +219,8 @@ def predict_tensor(
     }
     if mono_dep is not None:
         sample["mono_dep"] = mono_dep
+    if f_px_t is not None:
+        sample["f_px"] = f_px_t
     output = net(sample)
     depth = output["pred"][..., :H, :W]
     if not return_sky_mask:
@@ -221,10 +241,13 @@ def predict(
     dep: torch.Tensor,
     num_resolution: int,
     return_sky_mask: bool = False,
+    f_px: float | torch.Tensor | None = None,
 ):
     """Run OGNIDC on one RGB + sparse-depth pair and return NumPy arrays."""
     if return_sky_mask:
-        depth_t, sky_t = predict_tensor(net, rgb, dep, num_resolution, return_sky_mask=True)
+        depth_t, sky_t = predict_tensor(
+            net, rgb, dep, num_resolution, return_sky_mask=True, f_px=f_px
+        )
         return depth_t.squeeze().cpu().numpy(), sky_t.squeeze().cpu().numpy()
-    depth_t = predict_tensor(net, rgb, dep, num_resolution)
+    depth_t = predict_tensor(net, rgb, dep, num_resolution, f_px=f_px)
     return depth_t.squeeze().cpu().numpy()

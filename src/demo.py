@@ -15,6 +15,7 @@ import torch
 
 torch.autograd.set_detect_anomaly(bool(getattr(args_config, "debug_anomaly", False)))
 
+from model.colmap_intrinsics import resolve_colmap_focals, scaled_focal_for_image
 from model.final_reps import (
     interpolate_rep_predictions,
     is_validated_final_rep_batch_shape,
@@ -133,6 +134,21 @@ def _resolve_pairs(args):
     repo = Path(__file__).resolve().parents[1]
     return [(str(repo / "figures" / "demo_rgb.png"),
              str(repo / "figures" / "demo_sparse_depth.npy"))]
+
+
+def _resolve_colmap_intrinsics(args, pairs):
+    image_paths = [rgb_path for rgb_path, _depth_path in pairs]
+    model_dir, lookup, matched = resolve_colmap_focals(
+        image_paths,
+        getattr(args, "demo_colmap_model_dir", "auto"),
+    )
+    if model_dir is None:
+        print("COLMAP intrinsics: none found; MA uses f_px=0.6*width fallback")
+        return None
+    print(f"COLMAP intrinsics: {model_dir} ({matched}/{len(pairs)} RGB images matched)")
+    if matched == 0:
+        print("    no image names matched; MA uses f_px=0.6*width fallback")
+    return lookup
 
 
 def _input_cache_path(args, rgb_path, depth_path):
@@ -269,7 +285,7 @@ def _prior_max_metric_depth(args, dep_b):
     )
 
 
-def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b):
+def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b, f_px_b):
     """Return the prior branch shape that a CUDA Graph capture will bake in."""
     if mono_b is not None:
         return ("mono",)
@@ -288,9 +304,13 @@ def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b):
     if max_metric_depth is not None:
         caps = max_metric_depth.reshape(-1)
         caps_equal = torch.equal(caps, caps[:1].expand_as(caps))
+    f_equal = True
+    if f_px_b is not None:
+        f_vals = f_px_b.reshape(-1)
+        f_equal = torch.equal(f_vals, f_vals[:1].expand_as(f_vals))
 
     exact_rgb = torch.equal(rgb_in, rgb_in[:1].expand_as(rgb_in))
-    if exact_rgb and caps_equal:
+    if exact_rgb and caps_equal and f_equal:
         return ("single", rgb_in.shape[0] // 2)
 
     endpoint_kind = depth_module._rgb_same_kind(rgb_in[0], rgb_in[-1])
@@ -298,7 +318,7 @@ def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b):
         rgb_in,
         rgb_in[:1].expand_as(rgb_in),
     )
-    if batch_kind is not None and caps_equal:
+    if batch_kind is not None and caps_equal and f_equal:
         if "exposure" in {endpoint_kind, batch_kind}:
             reps = depth_module._even_representatives(
                 rgb_in.shape[0],
@@ -311,7 +331,10 @@ def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b):
     reps = []
     for idx in range(rgb_in.shape[0]):
         for group_idx, rep_idx in enumerate(reps):
-            if depth_module._rgb_same(rgb_in[idx:idx + 1], rgb_in[rep_idx:rep_idx + 1]):
+            same_f = True
+            if f_px_b is not None:
+                same_f = torch.equal(f_px_b[idx:idx + 1], f_px_b[rep_idx:rep_idx + 1])
+            if same_f and depth_module._rgb_same(rgb_in[idx:idx + 1], rgb_in[rep_idx:rep_idx + 1]):
                 groups[group_idx].append(idx)
                 break
         else:
@@ -323,10 +346,11 @@ def _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b):
     return ("none",)
 
 
-def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, want_sky, reps, mode):
+def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, f_px_b, want_sky, reps, mode):
     rep_count = len(reps)
     static_rgb = torch.empty_like(rgb_b[:rep_count])
     static_dep = torch.empty_like(dep_b[:rep_count])
+    static_f_px = torch.empty_like(f_px_b[:rep_count]) if f_px_b is not None else None
 
     depth_module = getattr(net, "depth_module", None)
     saved_auto_reuse = None
@@ -337,14 +361,16 @@ def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, want_sky, reps, mode):
     try:
         static_rgb.copy_(rgb_b[list(reps)])
         static_dep.copy_(dep_b[list(reps)])
+        if static_f_px is not None:
+            static_f_px.copy_(f_px_b[list(reps)])
         with torch.inference_mode():
             if want_sky:
                 predict_tensor(
                     net, static_rgb, static_dep, args.num_resolution,
-                    return_sky_mask=True,
+                    return_sky_mask=True, f_px=static_f_px,
                 )
             else:
-                predict_tensor(net, static_rgb, static_dep, args.num_resolution)
+                predict_tensor(net, static_rgb, static_dep, args.num_resolution, f_px=static_f_px)
         torch.cuda.synchronize()
 
         graph = torch.cuda.CUDAGraph()
@@ -352,7 +378,7 @@ def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, want_sky, reps, mode):
             if want_sky:
                 static_rep_depth, static_rep_sky = predict_tensor(
                     net, static_rgb, static_dep, args.num_resolution,
-                    return_sky_mask=True,
+                    return_sky_mask=True, f_px=static_f_px,
                 )
                 static_depth = interpolate_rep_predictions(
                     static_rep_depth, reps, rgb_b.shape[0],
@@ -362,7 +388,9 @@ def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, want_sky, reps, mode):
                     static_rep_sky.float(), reps, rgb_b.shape[0],
                 ) > 0.5
             else:
-                static_rep_depth = predict_tensor(net, static_rgb, static_dep, args.num_resolution)
+                static_rep_depth = predict_tensor(
+                    net, static_rgb, static_dep, args.num_resolution, f_px=static_f_px
+                )
                 static_depth = interpolate_rep_predictions(
                     static_rep_depth, reps, rgb_b.shape[0],
                     mode=mode,
@@ -378,16 +406,19 @@ def _build_final_rep_graph_entry(net, args, rgb_b, dep_b, want_sky, reps, mode):
         "graph": graph,
         "rgb": static_rgb,
         "dep": static_dep,
+        "f_px": static_f_px,
         "depth": static_depth,
         "sky": static_sky,
         "reps": reps,
     }
 
 
-def _run_final_rep_graph_entry(entry, rgb_b, dep_b):
+def _run_final_rep_graph_entry(entry, rgb_b, dep_b, f_px_b):
     reps = entry["reps"]
     entry["rgb"].copy_(rgb_b[list(reps)])
     entry["dep"].copy_(dep_b[list(reps)])
+    if entry["f_px"] is not None:
+        entry["f_px"].copy_(f_px_b[list(reps)])
     entry["graph"].replay()
 
     if entry["sky"] is None:
@@ -395,20 +426,21 @@ def _run_final_rep_graph_entry(entry, rgb_b, dep_b):
     return entry["depth"], entry["sky"]
 
 
-def _mono_cache_path(args, rgb_path, depth_path, h, w):
+def _mono_cache_path(args, rgb_path, depth_path, h, w, f_px):
     cache_dir = getattr(args, "demo_mono_cache_dir", None)
     if not cache_dir:
         return None
     cap = f"{float(getattr(args, 'anchor_cap_factor', 0.0)):.6g}".replace("-", "m").replace(".", "p")
+    focal = "default" if f_px is None else f"{float(f_px.reshape(-1)[0]):.6g}".replace("-", "m").replace(".", "p")
     fill = getattr(args, "demo_mono_cache_fill", "eager")
     name = (
-        f"mono_v3_{fill}__{Path(rgb_path).stem}__{Path(depth_path).stem}__"
-        f"{h}x{w}__cap{cap}__r{_file_sig(rgb_path)}__d{_file_sig(depth_path)}.npy"
+        f"mono_v4_{fill}__{Path(rgb_path).stem}__{Path(depth_path).stem}__"
+        f"{h}x{w}__f{focal}__cap{cap}__r{_file_sig(rgb_path)}__d{_file_sig(depth_path)}.npy"
     )
     return Path(cache_dir) / name
 
 
-def _compute_mono_dep(net, args, rgb, dep):
+def _compute_mono_dep(net, args, rgb, dep, f_px):
     cap_factor = getattr(args, "anchor_cap_factor", 0.0)
     max_metric_depth = None
     if cap_factor and cap_factor > 0:
@@ -447,7 +479,7 @@ def _compute_mono_dep(net, args, rgb, dep):
     try:
         with torch.inference_mode():
             t0 = _profile_begin(args)
-            prior_disp = depth_module.forward(rgb, max_metric_depth=max_metric_depth)
+            prior_disp = depth_module.forward(rgb, max_metric_depth=max_metric_depth, f_px=f_px)
             _profile_end(args, "mono prior forward", t0)
             t0 = _profile_begin(args)
             depth_pred_raw = torch.relu(prior_disp.unsqueeze(1))
@@ -469,8 +501,8 @@ def _compute_mono_dep(net, args, rgb, dep):
             ) = saved_trt_state
 
 
-def _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb, dep):
-    cache_path = _mono_cache_path(args, rgb_path, depth_path, rgb.shape[-2], rgb.shape[-1])
+def _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb, dep, f_px):
+    cache_path = _mono_cache_path(args, rgb_path, depth_path, rgb.shape[-2], rgb.shape[-1], f_px)
     if cache_path is None:
         return None
 
@@ -490,7 +522,7 @@ def _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb, dep):
         )
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    mono = _compute_mono_dep(net, args, rgb, dep)
+    mono = _compute_mono_dep(net, args, rgb, dep, f_px)
     t0 = _profile_begin(args)
     np.save(cache_path, mono.detach().float().cpu().numpy())
     _profile_end(args, "mono cache write", t0)
@@ -498,14 +530,15 @@ def _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb, dep):
     return mono
 
 
-def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache):
+def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, f_px_b, want_sky, graph_cache):
     use_graph = bool(getattr(args, "demo_cuda_graph", False))
     if not use_graph:
         if want_sky:
             return predict_tensor(
-                net, rgb_b, dep_b, args.num_resolution, return_sky_mask=True, mono_dep=mono_b
+                net, rgb_b, dep_b, args.num_resolution,
+                return_sky_mask=True, mono_dep=mono_b, f_px=f_px_b,
             )
-        return predict_tensor(net, rgb_b, dep_b, args.num_resolution, mono_dep=mono_b), None
+        return predict_tensor(net, rgb_b, dep_b, args.num_resolution, mono_dep=mono_b, f_px=f_px_b), None
 
     if not getattr(args, "capturable_inference", False) or getattr(args, "cg_fixed_iters", 0) <= 0:
         raise ValueError("--demo_cuda_graph requires --capturable_inference and --cg_fixed_iters > 0")
@@ -514,7 +547,7 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
     # calls. That changes the captured graph, so keep each prior branch plan in
     # a separate graph-cache entry. The plan mirrors the depth-module
     # predicates that decide the actual branch choice.
-    prior_graph_plan = _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b)
+    prior_graph_plan = _prior_reuse_graph_plan(net, args, rgb_b, dep_b, mono_b, f_px_b)
     final_rep_reps = ()
     final_rep_mode = None
     # The calibrated final-output replay is only validated for B16 512-preview
@@ -531,8 +564,10 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
             final_rep_mode = select_final_rep_mode(rgb_b, final_rep_reps)
     has_mono = mono_b is not None
     mono_shape = None if mono_b is None else tuple(mono_b.shape)
+    focal_shape = None if f_px_b is None else tuple(f_px_b.shape)
     key = (
         tuple(rgb_b.shape), tuple(dep_b.shape), mono_shape,
+        focal_shape,
         bool(want_sky), prior_graph_plan,
         ("final-reps", final_rep_reps, final_rep_mode),
     )
@@ -541,16 +576,16 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
         if entry is None:
             t0 = _profile_begin(args)
             entry = _build_final_rep_graph_entry(
-                net, args, rgb_b, dep_b, want_sky, final_rep_reps, final_rep_mode
+                net, args, rgb_b, dep_b, f_px_b, want_sky, final_rep_reps, final_rep_mode
             )
             graph_cache[key] = entry
-            depth, sky = _run_final_rep_graph_entry(entry, rgb_b, dep_b)
+            depth, sky = _run_final_rep_graph_entry(entry, rgb_b, dep_b, f_px_b)
             _profile_end(args, "cuda graph build final reps", t0)
             print(f"    cuda graph final-output reps: {final_rep_reps} mode={final_rep_mode}")
             return depth, sky
 
         t0 = _profile_begin(args)
-        depth, sky = _run_final_rep_graph_entry(entry, rgb_b, dep_b)
+        depth, sky = _run_final_rep_graph_entry(entry, rgb_b, dep_b, f_px_b)
         _profile_end(args, "cuda graph replay final reps", t0)
         return depth, sky
 
@@ -559,20 +594,26 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
         static_rgb = torch.empty_like(rgb_b)
         static_dep = torch.empty_like(dep_b)
         static_mono = torch.empty_like(mono_b) if has_mono else None
+        static_f_px = torch.empty_like(f_px_b) if f_px_b is not None else None
         static_rgb.copy_(rgb_b)
         static_dep.copy_(dep_b)
         if static_mono is not None:
             static_mono.copy_(mono_b)
+        if static_f_px is not None:
+            static_f_px.copy_(f_px_b)
 
         # One eager warmup pays TRT self-checks and allocator setup outside capture.
         with torch.inference_mode():
             if want_sky:
                 predict_tensor(
                     net, static_rgb, static_dep, args.num_resolution,
-                    return_sky_mask=True, mono_dep=static_mono,
+                    return_sky_mask=True, mono_dep=static_mono, f_px=static_f_px,
                 )
             else:
-                predict_tensor(net, static_rgb, static_dep, args.num_resolution, mono_dep=static_mono)
+                predict_tensor(
+                    net, static_rgb, static_dep, args.num_resolution,
+                    mono_dep=static_mono, f_px=static_f_px,
+                )
         torch.cuda.synchronize()
 
         graph = torch.cuda.CUDAGraph()
@@ -580,11 +621,12 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
             if want_sky:
                 static_depth, static_sky = predict_tensor(
                     net, static_rgb, static_dep, args.num_resolution,
-                    return_sky_mask=True, mono_dep=static_mono,
+                    return_sky_mask=True, mono_dep=static_mono, f_px=static_f_px,
                 )
             else:
                 static_depth = predict_tensor(
-                    net, static_rgb, static_dep, args.num_resolution, mono_dep=static_mono
+                    net, static_rgb, static_dep, args.num_resolution,
+                    mono_dep=static_mono, f_px=static_f_px,
                 )
                 static_sky = None
         entry = {
@@ -592,6 +634,7 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
             "rgb": static_rgb,
             "dep": static_dep,
             "mono": static_mono,
+            "f_px": static_f_px,
             "depth": static_depth,
             "sky": static_sky,
         }
@@ -604,13 +647,28 @@ def _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, want_sky, graph_cache
         entry["dep"].copy_(dep_b)
         if entry["mono"] is not None:
             entry["mono"].copy_(mono_b)
+        if entry["f_px"] is not None:
+            entry["f_px"].copy_(f_px_b)
         entry["graph"].replay()
         _profile_end(args, "cuda graph replay", t0)
 
     return entry["depth"], entry["sky"]
 
 
-def _run_batch(net, args, pairs, outputs, cmap, request_sky, save_sky, out_dir, start_idx, total, graph_cache):
+def _run_batch(
+    net,
+    args,
+    pairs,
+    outputs,
+    cmap,
+    request_sky,
+    save_sky,
+    out_dir,
+    start_idx,
+    total,
+    graph_cache,
+    focal_lookup,
+):
     import torch.nn.functional as _F
 
     prepared = []
@@ -628,11 +686,21 @@ def _run_batch(net, args, pairs, outputs, cmap, request_sky, save_sky, out_dir, 
     rgbs = []
     deps = []
     monos = []
+    focal_values = []
+    focal_matches = 0
     for rgb_path, depth_path, rgb, dep, _sparse, h, w in prepared:
         pad = (0, final_w - w, 0, final_h - h)
         rgb_p = _F.pad(rgb, pad)
         dep_p = _F.pad(dep, pad)
-        mono = _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb_p, dep_p)
+        f_px = scaled_focal_for_image(focal_lookup, rgb_path, final_w)
+        if f_px is None:
+            focal_values.append(0.6 * final_w)
+            f_px_t = None
+        else:
+            focal_matches += 1
+            focal_values.append(float(f_px))
+            f_px_t = torch.tensor([float(f_px)], device=rgb_p.device, dtype=torch.float32)
+        mono = _load_or_compute_mono_dep(net, args, rgb_path, depth_path, rgb_p, dep_p, f_px_t)
         rgbs.append(rgb_p)
         deps.append(dep_p)
         if mono is not None:
@@ -641,10 +709,13 @@ def _run_batch(net, args, pairs, outputs, cmap, request_sky, save_sky, out_dir, 
     rgb_b = torch.cat(rgbs, dim=0).contiguous()
     dep_b = torch.cat(deps, dim=0).contiguous()
     mono_b = torch.cat(monos, dim=0).contiguous() if monos else None
+    f_px_b = None
+    if focal_matches:
+        f_px_b = torch.tensor(focal_values, device=rgb_b.device, dtype=torch.float32)
     _profile_end(args, "batch pad/cat", t0)
 
     t0 = _profile_begin(args)
-    depth_t, sky_t = _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, request_sky, graph_cache)
+    depth_t, sky_t = _predict_batch_tensor(net, args, rgb_b, dep_b, mono_b, f_px_b, request_sky, graph_cache)
     _profile_end(args, "predict batch", t0)
 
     for i, (rgb_path, _depth_path, _rgb, _dep, sparse, h, w) in enumerate(prepared):
@@ -661,6 +732,7 @@ def test(args):
     _profile_end(args, "load model", t0)
 
     pairs = _resolve_pairs(args)
+    focal_lookup = _resolve_colmap_intrinsics(args, pairs)
     out_dir = Path(args.demo_out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -694,7 +766,7 @@ def test(args):
 
     for start in range(0, len(pairs), batch_size):
         _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, request_sky, save_sky,
-                   out_dir, start + 1, len(pairs), graph_cache)
+                   out_dir, start + 1, len(pairs), graph_cache, focal_lookup)
     if getattr(args, "demo_profile", False):
         _profile_print()
 

@@ -117,6 +117,7 @@ class OGNIDC(nn.Module, PyTorchModelHubMixin):
         # guards against any accidental in-place write.
         dep_original = sample['dep']
         K = sample['K']
+        f_px = sample.get('f_px')
         depth_pattern = sample['pattern']
 
         B, _, H, W = rgb.shape
@@ -217,7 +218,7 @@ class OGNIDC(nn.Module, PyTorchModelHubMixin):
             # convention the backbone was trained against under DAv2. MA.infer
             # resizes its output back to the input size, so this is full-res.
             prior_disp = self.depth_module.forward(
-                rgb, max_metric_depth=max_metric_depth
+                rgb, max_metric_depth=max_metric_depth, f_px=f_px
             )  # B x H x W — disparity, 0 exactly where capped as far/sky
 
             # Already full-res: exact 0s, no interpolation blur on the mask.

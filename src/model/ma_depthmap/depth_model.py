@@ -147,6 +147,11 @@ class MetricAnythingDepthMap(nn.Module):
         canonical_inverse_depth = self.forward(x)
         if f_px is None:
             f_px = 1000
+        if torch.is_tensor(f_px):
+            f_px = f_px.to(device=canonical_inverse_depth.device, dtype=canonical_inverse_depth.dtype)
+            if f_px.ndim == 0:
+                f_px = f_px.reshape(1)
+            f_px = f_px.reshape(-1, *([1] * (canonical_inverse_depth.ndim - 1)))
 
         inverse_depth = canonical_inverse_depth * (width / f_px)
 

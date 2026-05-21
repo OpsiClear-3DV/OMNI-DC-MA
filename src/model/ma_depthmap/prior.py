@@ -173,6 +173,42 @@ class MADepthMapPrior(nn.Module):
     def _capture_key(rgb: torch.Tensor) -> tuple[int, tuple[int, ...], str, torch.dtype]:
         return (rgb.data_ptr(), tuple(rgb.shape), str(rgb.device), rgb.dtype)
 
+    def _default_f_px(self, width: int) -> float:
+        return self.f_px_default if self.f_px_default is not None else 0.6 * width
+
+    def _normalize_f_px(
+        self,
+        f_px: float | torch.Tensor | None,
+        batch_size: int,
+        width: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if f_px is None:
+            f_px = self._default_f_px(width)
+        f = torch.as_tensor(f_px, device=device, dtype=torch.float32)
+        if f.ndim == 0:
+            f = f.expand(batch_size)
+        else:
+            f = f.reshape(-1)
+            if f.numel() == 1 and batch_size > 1:
+                f = f.expand(batch_size)
+        if f.numel() != batch_size:
+            raise ValueError(f"f_px has {f.numel()} values for batch size {batch_size}")
+        return f.contiguous()
+
+    @staticmethod
+    def _all_f_px_equal(f_px: torch.Tensor | None) -> bool:
+        if f_px is None or f_px.numel() <= 1:
+            return True
+        return bool(torch.equal(f_px, f_px[:1].expand_as(f_px)))
+
+    @staticmethod
+    def _select_f_px(f_px: torch.Tensor, item) -> torch.Tensor:
+        selected = f_px[item]
+        if selected.ndim == 0:
+            selected = selected.reshape(1)
+        return selected.contiguous()
+
     def _rgb_same_kind(self, a: torch.Tensor, b: torch.Tensor) -> str | None:
         if (
             self.reuse_atol <= 0
@@ -208,7 +244,10 @@ class MADepthMapPrior(nn.Module):
         return tuple(dict.fromkeys(reps))
 
     def _verify_reuse_first_inputs(
-        self, rgb: torch.Tensor, max_metric_depth: torch.Tensor | None
+        self,
+        rgb: torch.Tensor,
+        max_metric_depth: torch.Tensor | None,
+        f_px: torch.Tensor | None,
     ) -> None:
         """Guard the exact-repeat prior reuse path outside CUDA capture.
 
@@ -231,22 +270,31 @@ class MADepthMapPrior(nn.Module):
                     "--prior_reuse_first_in_batch requires all prior cap values "
                     "in the batch to be identical. Disable the flag for normal batches."
                 )
+        if not self._all_f_px_equal(f_px):
+            raise ValueError(
+                "--prior_reuse_first_in_batch requires all f_px values in the "
+                "batch to be identical. Disable the flag for normal batches."
+            )
 
     def _batch_is_exact_repeat(
-        self, rgb: torch.Tensor, max_metric_depth: torch.Tensor | None
+        self,
+        rgb: torch.Tensor,
+        max_metric_depth: torch.Tensor | None,
+        f_px: torch.Tensor | None,
     ) -> bool:
         """Batch-level predicate for automatic prior reuse."""
         self._capture_reuse_reps = (rgb.shape[0] // 2,)
         if rgb.shape[0] <= 1:
             return False
 
+        exact_f = self._all_f_px_equal(f_px)
         exact_rgb = torch.equal(rgb, rgb[:1].expand_as(rgb))
         exact_caps = True
         if max_metric_depth is not None:
             caps = max_metric_depth.reshape(-1)
             exact_caps = torch.equal(caps, caps[:1].expand_as(caps))
         if exact_rgb:
-            return exact_caps
+            return exact_caps and exact_f
 
         # Cheap reject for normal mixed batches. Only scan the full batch when
         # the endpoints match under the reuse predicate, which is the
@@ -262,6 +310,8 @@ class MADepthMapPrior(nn.Module):
             caps = max_metric_depth.reshape(-1)
             if not torch.equal(caps, caps[:1].expand_as(caps)):
                 return False
+        if not exact_f:
+            return False
         if "exposure" in {endpoint_kind, batch_kind}:
             self._capture_reuse_reps = self._even_representatives(
                 rgb.shape[0],
@@ -273,6 +323,7 @@ class MADepthMapPrior(nn.Module):
         self,
         rgb: torch.Tensor,
         max_metric_depth: torch.Tensor | None,
+        f_px: torch.Tensor | None,
         capture_key_tensor: torch.Tensor | None = None,
     ) -> bool:
         key_tensor = rgb if capture_key_tensor is None else capture_key_tensor
@@ -283,7 +334,7 @@ class MADepthMapPrior(nn.Module):
             return False
 
         if self.reuse_first_in_batch:
-            self._verify_reuse_first_inputs(rgb, max_metric_depth)
+            self._verify_reuse_first_inputs(rgb, max_metric_depth, f_px)
             self._capture_reuse_first_in_batch = True
             self._capture_reuse_first_key = self._capture_key(key_tensor)
             self._capture_reuse_reps = (rgb.shape[0] // 2,)
@@ -301,7 +352,7 @@ class MADepthMapPrior(nn.Module):
                 and self._capture_reuse_first_key == self._capture_key(key_tensor)
             )
 
-        reuse = self._batch_is_exact_repeat(rgb, max_metric_depth)
+        reuse = self._batch_is_exact_repeat(rgb, max_metric_depth, f_px)
         self._capture_reuse_first_in_batch = reuse
         self._capture_reuse_first_key = self._capture_key(key_tensor) if reuse else None
         if not reuse:
@@ -311,6 +362,7 @@ class MADepthMapPrior(nn.Module):
     def _duplicate_groups(
         self,
         rgb: torch.Tensor,
+        f_px: torch.Tensor | None,
         capture_key_tensor: torch.Tensor | None = None,
     ) -> tuple[tuple[int, ...], ...]:
         key_tensor = rgb if capture_key_tensor is None else capture_key_tensor
@@ -329,7 +381,10 @@ class MADepthMapPrior(nn.Module):
         reps: list[int] = []
         for idx in range(rgb.shape[0]):
             for group_idx, rep_idx in enumerate(reps):
-                if self._rgb_same(rgb[idx:idx + 1], rgb[rep_idx:rep_idx + 1]):
+                same_f = True
+                if f_px is not None:
+                    same_f = bool(torch.equal(f_px[idx:idx + 1], f_px[rep_idx:rep_idx + 1]))
+                if same_f and self._rgb_same(rgb[idx:idx + 1], rgb[rep_idx:rep_idx + 1]):
                     groups[group_idx].append(idx)
                     break
             else:
@@ -408,7 +463,12 @@ class MADepthMapPrior(nn.Module):
         return d
 
     @torch.no_grad()
-    def forward(self, rgb: torch.Tensor, max_metric_depth: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        rgb: torch.Tensor,
+        max_metric_depth: torch.Tensor | None = None,
+        f_px: float | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Run the prior.
 
         Args:
@@ -421,6 +481,9 @@ class MADepthMapPrior(nn.Module):
                 clamp) is removed from the conditioning channel so it can't
                 skew OMNI-DC's percentile-normalize. Caller (ognidc.py)
                 supplies k x max(SfM anchor).
+            f_px: optional per-sample focal length in pixels at this tensor
+                width. When omitted, preserves the legacy generic
+                ``0.6 * width`` focal.
 
         Returns:
             (B, H, W) — disparity (default) or metric depth.
@@ -436,14 +499,14 @@ class MADepthMapPrior(nn.Module):
         )
         if not full_prior_only:
             self._ensure_net(rgb.device)
-        f_px = self.f_px_default if self.f_px_default is not None else 0.6 * W
+        f_px = self._normalize_f_px(f_px, B, W, rgb.device)
 
         rgb_in = rgb.half() if self.fp16 else rgb
 
         # Reuse decisions must match the tensor the MA prior actually sees.
         # The validated TRT path consumes fp16 RGB, so fp32-only ulp changes are
         # indistinguishable to the prior and should not force duplicate work.
-        if self._should_reuse_first(rgb_in, max_metric_depth, capture_key_tensor=rgb):
+        if self._should_reuse_first(rgb_in, max_metric_depth, f_px, capture_key_tensor=rgb):
             # Batch-reuse fast path: exact/tiny-delta batches use one member,
             # while near-constant exposure groups use a few evenly spaced
             # representatives and linearly interpolate inverse-depth. That
@@ -454,11 +517,17 @@ class MADepthMapPrior(nn.Module):
             reps = self._capture_reuse_reps
             if len(reps) <= 1:
                 rep_idx = reps[0] if reps else B // 2
-                d = self._infer_metric_depth(rgb_in[rep_idx:rep_idx + 1], f_px)
+                d = self._infer_metric_depth(
+                    rgb_in[rep_idx:rep_idx + 1],
+                    self._select_f_px(f_px, slice(rep_idx, rep_idx + 1)),
+                )
                 depth = d.expand(B, -1, -1).float()
             else:
                 rep_depths = [
-                    self._infer_metric_depth(rgb_in[rep_idx:rep_idx + 1], f_px)
+                    self._infer_metric_depth(
+                        rgb_in[rep_idx:rep_idx + 1],
+                        self._select_f_px(f_px, slice(rep_idx, rep_idx + 1)),
+                    )
                     for rep_idx in reps
                 ]
                 rep_depth = torch.cat(rep_depths, dim=0).float()
@@ -481,18 +550,24 @@ class MADepthMapPrior(nn.Module):
                 depth = 1.0 / depth.clamp(min=1e-6)
         else:
             chunk_size = self._effective_prior_batch_size(min(self.prior_batch_size, B))
-            groups = self._duplicate_groups(rgb_in, capture_key_tensor=rgb)
+            groups = self._duplicate_groups(rgb_in, f_px, capture_key_tensor=rgb)
             if any(len(group) > 1 for group in groups):
                 depth_parts: list[torch.Tensor | None] = [None] * B
                 for group in groups:
-                    d = self._infer_metric_depth(rgb_in[group[0]:group[0] + 1], f_px)
+                    d = self._infer_metric_depth(
+                        rgb_in[group[0]:group[0] + 1],
+                        self._select_f_px(f_px, slice(group[0], group[0] + 1)),
+                    )
                     for idx in group:
                         depth_parts[idx] = d
                 depth = torch.cat([part for part in depth_parts if part is not None], dim=0)
             else:
                 depths = []
                 for start in range(0, B, chunk_size):
-                    d = self._infer_metric_depth(rgb_in[start:start + chunk_size], f_px)
+                    d = self._infer_metric_depth(
+                        rgb_in[start:start + chunk_size],
+                        self._select_f_px(f_px, slice(start, start + chunk_size)),
+                    )
                     depths.append(d)
                 depth = torch.cat(depths, dim=0)
             # Cap/disparity math in fp32 regardless of the prior's compute dtype.

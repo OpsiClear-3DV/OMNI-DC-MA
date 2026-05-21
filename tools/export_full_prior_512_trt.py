@@ -35,7 +35,9 @@ class FullPrior512ExportWrapper(nn.Module):
         self.net = net
 
     def forward(self, rgb: torch.Tensor) -> torch.Tensor:
-        # Fixed 352x512 input. MADepthMapPrior uses f_px=0.6*W.
+        # Fixed 352x512 input exported at the legacy f_px=0.6*W. Runtime
+        # rescales the metric output when COLMAP intrinsics provide a
+        # different focal length.
         out = self.net.infer(rgb, f_px=307.2)["depth"]
         if out.dim() == 2:
             out = out.unsqueeze(0)

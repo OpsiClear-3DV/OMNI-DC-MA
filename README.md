@@ -5,10 +5,10 @@
 **TL;DR:** OMNI-DC-MA is an inference-focused depth-completion repo for turning RGB images plus sparse COLMAP/SfM depth anchors into dense metric depth maps. It is a cleaned-up, Windows/CUDA-13-ready fork of the current OMNI-DC inference path with a Metric-Anything depth prior, higher-certainty COLMAP anchor generation, TensorRT hooks, batch processing, and release-hosted model assets.
 
 <p align="center">
-  <img src="docs/assets/bicycle_sparse_ma_completed_sky10.png" alt="Sparse bicycle COLMAP/SfM depth anchors, original Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
+  <img src="docs/assets/bicycle_sparse_ma_completed_sky10.png" alt="Sparse bicycle COLMAP/SfM depth anchors, COLMAP-intrinsics-scaled Metric-Anything depth-map result, and completed OMNI-DC-MA depth map with sky/far mask applied" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the original Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.0x prior sky/far mask applied. Valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
+<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D, the COLMAP-intrinsics-scaled Metric-Anything depth-map result, and the regenerated 512 px OMNI-DC-MA completed depth map with the 1.0x prior sky/far mask applied. Valid depths use the same Turbo color map on a fixed 0-75 m metric scale; masked zero-depth pixels render black.</em></p>
 
 ## What This Repo Is For
 
@@ -32,6 +32,7 @@ Compared with the original research repo / earlier local pipeline, this version 
 - **Inference-first layout:** training datasets, losses, experiment folders, and generated outputs are not part of the repo surface.
 - **Repo-root launcher:** `python run_demo.py ...` works from the root instead of requiring manual `cd src` import setup.
 - **Metric-Anything prior:** replaces the older monocular prior path with an in-tree MA-depthmap prior wrapper.
+- **COLMAP-aware MA metric scale:** inference auto-detects COLMAP `cameras`/`images` files near the RGB/depth inputs and passes the per-image focal length into the MA-depthmap metric conversion when available.
 - **Higher-certainty sparse anchors:** the COLMAP converter defaults to `track_length >= 3` and `reprojection_error <= 2 px`, and can optionally reject anchors that disagree with a reference depth map in inverse depth.
 - **Batch directory processing:** basename-matched RGB/depth directories can be processed in one command.
 - **Fast 512 px preview path:** batch-16 preview inference supports TensorRT, fixed-iteration CG, CUDA graph replay, and final-output representative interpolation, giving about 24x higher per-image throughput than the original single-image OMNI-DC+MA path at the same 512-preview image size.
@@ -201,10 +202,12 @@ For each RGB stem:
 
 `anchor_cap_factor` defaults to `1.0`, which zeros predictions farther than the deepest valid sparse anchor. The same MA-prior sky/far-field mask is requested and applied to saved depth outputs even when `skymask` is not requested. This keeps the output compatible with the sparse-depth convention that `0` means invalid.
 
+When COLMAP intrinsics are available, `run_demo.py` automatically searches near the RGB/depth inputs for a sparse model such as `scene\sparse\0`, scales the COLMAP focal length to the inference tensor width, and uses that focal for the MA-depthmap metric conversion. Use `--demo_colmap_model_dir C:\path\to\sparse\0` to pin a model explicitly, or `--demo_colmap_model_dir none` to keep the legacy generic `0.6 * width` focal fallback.
+
 ## Verification
 
 ```powershell
-uv run ruff check run_demo.py src\demo.py src\config.py src\model\infer.py src\model\final_reps.py tools tests
+uv run ruff check run_demo.py src\demo.py src\config.py src\model\infer.py src\model\colmap_intrinsics.py src\model\final_reps.py tools tests
 uv run pytest tests\test_imports.py
 ```
 

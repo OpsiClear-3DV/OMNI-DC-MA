@@ -22,6 +22,8 @@ images_2/_DSC8679.JPG
 sparse_depth_all_images_2_certain/_DSC8679.npy
 ```
 
+Because the sparse inputs come from SfM, `demo.py` also tries to load COLMAP intrinsics automatically. With the default `--demo_colmap_model_dir auto`, it searches near the RGB/depth paths for a model directory such as `scene/sparse/0`, loads `cameras` and `images`, matches by image name/stem, and scales the COLMAP focal length to the actual padded inference tensor width before calling the MA-depthmap prior. If no model is found, MA falls back to the legacy generic `f_px = 0.6 * width`.
+
 ## Batch And Preview Path
 
 `--demo_batch_size 16 --demo_max_size 512` is the validated high-throughput path for the bicycle sequence. Images are resized with bilinear RGB interpolation. Sparse depth is downsampled by preserving valid anchors with a min-depth style pooling path, so metric constraints survive preview resizing.
@@ -48,4 +50,4 @@ This is a throughput optimization for sequence processing, not the default for a
 
 ## Anchor Cap
 
-The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The prior sky/far-field mask is also requested whenever output capping is enabled and is applied to the saved completed depth, not only to the optional `skymask` visualization.
+The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The prior sky/far-field mask is computed in MA metric-depth space using COLMAP focal scaling when available, requested whenever output capping is enabled, and applied to the saved completed depth, not only to the optional `skymask` visualization.
