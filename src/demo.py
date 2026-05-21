@@ -351,12 +351,17 @@ def _resolve_demo_output_options(args):
     if getattr(args, "save_colmap_mask", False):
         outputs.add("colmap_mask")
 
-    sky_mask = getattr(args, "sky_mask", None)
-    if sky_mask is False:
+    sky_mask = bool(getattr(args, "sky_mask", False))
+    save_sky_requested = "skymask" in outputs or getattr(args, "save_sky_mask", False)
+    save_colmap_requested = "colmap_mask" in outputs or getattr(args, "save_colmap_mask", False)
+    if not sky_mask:
         args.anchor_cap_factor = 0.0
         args.apply_sky_mask_to_depth = False
-        outputs.discard("skymask")
-        outputs.discard("colmap_mask")
+        if save_sky_requested or save_colmap_requested:
+            raise ValueError(
+                "sky/far mask outputs require --sky_mask. "
+                "Use --sky_mask --save_colmap_mask, or remove mask outputs."
+            )
 
     if not outputs:
         raise ValueError("--demo_outputs selected nothing to write")
@@ -366,18 +371,19 @@ def _resolve_demo_output_options(args):
     cap_enabled = bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
 
     apply_opt = getattr(args, "apply_sky_mask_to_depth", None)
-    if sky_mask is True and not cap_enabled:
+    if sky_mask and not cap_enabled:
         raise ValueError("--sky_mask requires --far_depth_factor > 0")
     if apply_opt is True and not cap_enabled:
         raise ValueError("--apply_sky_mask requires --far_depth_factor > 0")
 
-    if sky_mask is False:
+    if not sky_mask:
         apply_sky_mask_to_depth = False
         request_sky = False
     else:
         apply_sky_mask_to_depth = cap_enabled if apply_opt is None else bool(apply_opt)
         request_sky = save_sky or save_colmap_mask or apply_sky_mask_to_depth
 
+    args.apply_sky_mask_to_depth = apply_sky_mask_to_depth
     return outputs, save_sky, save_colmap_mask, request_sky, apply_sky_mask_to_depth
 
 
@@ -907,6 +913,7 @@ def main(args):
 
 if __name__ == "__main__":
     args_main = _apply_demo_runtime_defaults(check_args(args_config))
+    _resolve_demo_output_options(args_main)
 
     print("\n\n=== Arguments ===")
     for cnt, key in enumerate(sorted(vars(args_main))):

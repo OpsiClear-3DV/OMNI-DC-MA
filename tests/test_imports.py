@@ -17,6 +17,7 @@ def test_config_parses_defaults():
     assert hasattr(config.args, "num_resolution")
     assert hasattr(config.args, "demo_rgb")  # our added CLI flag
     assert config.args.depth_activation_format in ("exp", "linear")
+    assert config.args.sky_mask is False
 
 
 def test_config_parses_intuitive_sky_cli_aliases():
@@ -24,11 +25,13 @@ def test_config_parses_intuitive_sky_cli_aliases():
 
     parsed = config.parser.parse_args([
         "--gpus", "0",
+        "-sky_mask",
         "--far_depth_factor", "1.25",
         "--save_colmap_mask",
         "--no_apply_sky_mask",
     ])
 
+    assert parsed.sky_mask is True
     assert parsed.anchor_cap_factor == 1.25
     assert parsed.save_colmap_mask
     assert parsed.apply_sky_mask_to_depth is False

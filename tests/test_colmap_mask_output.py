@@ -31,13 +31,13 @@ def test_colmap_mask_writes_colmap_semantics(tmp_path):
     assert mask.tolist() == [[255, 0], [255, 255]]
 
 
-def test_no_sky_mask_disables_mask_outputs():
+def test_sky_mask_is_off_by_default():
     from demo import _resolve_demo_output_options
 
     args = SimpleNamespace(
-        demo_outputs="depth,raw,vis,skymask,colmap_mask",
-        save_sky_mask=True,
-        save_colmap_mask=True,
+        demo_outputs="depth,raw,vis",
+        save_sky_mask=False,
+        save_colmap_mask=False,
         sky_mask=False,
         apply_sky_mask_to_depth=None,
         anchor_cap_factor=1.25,
@@ -53,6 +53,26 @@ def test_no_sky_mask_disables_mask_outputs():
     assert args.anchor_cap_factor == 0.0
 
 
+def test_mask_outputs_require_sky_mask():
+    from demo import _resolve_demo_output_options
+
+    args = SimpleNamespace(
+        demo_outputs="depth,vis,colmap_mask",
+        save_sky_mask=False,
+        save_colmap_mask=True,
+        sky_mask=False,
+        apply_sky_mask_to_depth=None,
+        anchor_cap_factor=1.25,
+    )
+
+    try:
+        _resolve_demo_output_options(args)
+    except ValueError as exc:
+        assert "--sky_mask" in str(exc)
+    else:
+        raise AssertionError("mask outputs should require --sky_mask")
+
+
 def test_colmap_mask_can_export_without_applying_to_depth():
     from demo import _resolve_demo_output_options
 
@@ -60,7 +80,7 @@ def test_colmap_mask_can_export_without_applying_to_depth():
         demo_outputs="depth,vis",
         save_sky_mask=False,
         save_colmap_mask=True,
-        sky_mask=None,
+        sky_mask=True,
         apply_sky_mask_to_depth=False,
         anchor_cap_factor=1.25,
     )

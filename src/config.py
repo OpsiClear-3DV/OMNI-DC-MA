@@ -499,19 +499,20 @@ parser.add_argument('--demo_batch_size', type=int, default=1,
                     help='Number of same-run demo pairs to infer together. Use '
                          '16 with --demo_max_size 512 for higher throughput; '
                          'inputs are padded per batch and cropped back per image.')
-parser.add_argument('--demo_outputs', type=str, default='depth,raw,vis,skymask',
+parser.add_argument('--demo_outputs', type=str, default='depth,raw,vis',
                     help="Comma-separated subset of artifacts to write: "
                          "'depth' (<stem>.npy, capped), 'raw' (<stem>_raw.npy, "
                          "uncapped), 'vis' (<stem>.png, colormap), 'skymask' "
                          "(<input filename>.png), 'colmap_mask' "
                          "(COLMAP mask_path-compatible image.ext.png). You can "
-                         "also use --save_sky_mask and --save_colmap_mask.")
+                         "also use --save_sky_mask and --save_colmap_mask. "
+                         "Default writes depth, raw, and visualization only.")
 parser.add_argument('--save_sky_mask', '--save-sky-mask', action='store_true', default=False,
                     help='Add the plain demo sky/far mask PNG output without editing '
-                         '--demo_outputs.')
+                         '--demo_outputs. Requires --sky_mask.')
 parser.add_argument('--save_colmap_mask', '--save-colmap-mask', action='store_true', default=False,
                     help='Add COLMAP mask_path-compatible mask output without editing '
-                         '--demo_outputs.')
+                         '--demo_outputs. Requires --sky_mask.')
 parser.add_argument('--demo_colmap_mask_dir', type=str, default=None,
                     help='Output directory for demo_outputs=colmap_mask. If omitted, '
                          'infer a sibling "masks" directory from --demo_rgb_dir or '
@@ -554,13 +555,15 @@ parser.add_argument('--demo_cuda_graph', action='store_true', default=False,
                     help='Replay fixed-shape demo batches through a CUDA Graph. '
                          'Requires --capturable_inference and --cg_fixed_iters; '
                          'best for many same-resolution batches, not one-off runs.')
-parser.add_argument('--sky_mask', '--sky-mask', dest='sky_mask', action='store_true', default=None,
+parser.add_argument('--sky_mask', '--sky-mask', '-sky_mask',
+                    dest='sky_mask', action='store_true', default=False,
                     help='Enable the MA prior sky/far mask feature. This is not '
                          'semantic sky segmentation; it is derived from MA metric '
                          'depth relative to sparse SfM anchors.')
-parser.add_argument('--no_sky_mask', '--no-sky-mask', dest='sky_mask', action='store_false',
-                    help='Disable the MA prior sky/far mask feature. This also '
-                         'forces --far_depth_factor 0 and skips sky-mask file outputs.')
+parser.add_argument('--no_sky_mask', '--no-sky-mask', '-no_sky_mask',
+                    dest='sky_mask', action='store_false',
+                    help='Disable the MA prior sky/far mask feature. This is the '
+                         'default and forces --far_depth_factor 0.')
 parser.add_argument('--apply_sky_mask', '--apply-sky-mask',
                     dest='apply_sky_mask_to_depth', action='store_true', default=None,
                     help='Apply the MA sky/far mask to the saved completed depth.')
@@ -570,9 +573,9 @@ parser.add_argument('--no_apply_sky_mask', '--no-apply-sky-mask',
                          'Mask files can still be exported.')
 parser.add_argument('--far_depth_factor', '--far-depth-factor', '--anchor_cap_factor',
                     dest='anchor_cap_factor', type=float, default=1.0,
-                    help='Depth threshold for the MA sky/far mask and output cap: '
+                    help='Depth threshold used when --sky_mask is enabled: '
                          'factor x farthest SfM anchor. Use 1.25 for the current '
-                         'bicycle preview convention. Set <= 0 to disable. '
+                         'bicycle preview convention. Ignored unless --sky_mask is set. '
                          '--anchor_cap_factor is kept as a backward-compatible alias.')
 parser.add_argument('--cg_rtol', type=float, default=1e-5,
                     help='Optim-layer conjugate-gradient relative tolerance. '
