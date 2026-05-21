@@ -10,6 +10,8 @@
 uv run python tools\generate_colmap_sparse_depth.py --model-dir <scene>\sparse\0 --rgb-dir <scene>\images_2 --out-dir <scene>\omnidc_test\sparse_depth_all_images_2
 ```
 
+By default it uses the more certain COLMAP points only: `--min-track-length 3` and `--max-reproj-error 2`. Use `--no-quality-filter` only for comparison/debugging.
+
 For a one-frame smoke check, add `--only-stem _DSC8679 --limit 1 --verbose`.
 
 ## Inference Benchmarks

@@ -17,7 +17,7 @@ These are the current optimizations carried into this repo.
 - Optional full 352x512 prior TensorRT engine.
 - Directory batching, padded batch execution, and output writing from `src/demo.py`.
 - Final-output representative interpolation for validated 512-preview batch-16 sequence batches.
-- COLMAP sparse-model conversion into per-image sparse metric-depth `.npy` files.
+- COLMAP sparse-model conversion into per-image sparse metric-depth `.npy` files, using higher-certainty point tracks by default.
 
 ## Current Measured Preview Behavior
 

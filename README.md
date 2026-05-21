@@ -8,7 +8,7 @@ This is the organized inference-focused build of the current OMNI-DC MA-depthmap
   <img src="docs/assets/bicycle_sparse_vs_completed.png" alt="Sparse bicycle COLMAP/SfM depth anchors projected into the image plane next to the completed OMNI-DC-MA depth map" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: sparse metric SfM anchors projected to 2D as the input depth signal, compared with the completed 512 px OMNI-DC-MA depth map.</em></p>
+<p align="center"><em>Example bicycle frame: higher-certainty sparse metric SfM anchors projected to 2D as the input depth signal, compared with the completed 512 px OMNI-DC-MA depth map.</em></p>
 
 ## What Is Included
 
@@ -71,7 +71,7 @@ Convert a COLMAP sparse model into OMNI-DC sparse depth `.npy` files:
 uv run python tools\generate_colmap_sparse_depth.py --model-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\sparse\0 --rgb-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\images_2 --out-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\sparse_depth_all_images_2
 ```
 
-The tool uses COLMAP camera poses and point tracks, writes one full-size `float32` depth map per matched RGB image, and uses `0` as the invalid-depth sentinel.
+The tool uses COLMAP camera poses and point tracks, writes one full-size `float32` depth map per matched RGB image, and uses `0` as the invalid-depth sentinel. By default it keeps only higher-certainty points: track length at least 3 and COLMAP reprojection error at most 2 px.
 
 ## Outputs
 
