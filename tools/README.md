@@ -30,10 +30,27 @@ Reusable helpers live in `src/colmap_utils/`:
 
 - `filters.py`: quality and inverse-depth consistency filters.
 - `sparse_depth.py`: sparse-depth generation from COLMAP tracks.
+- `densify.py`: depth-guided addition of sparse COLMAP points in underfilled image-grid cells.
 - `editing.py`: model-editing primitives for removing observations, removing points, adding tracked points, and validating point references.
 - `io.py`: thin wrappers around the vendored COLMAP read/write implementation.
 
 The current sparse-depth CLI filters generated `.npy` anchors. The editing helpers are the base for tools that rewrite `images.bin` and `points3D.bin`.
+
+## Add Depth-Guided COLMAP Points
+
+`add_colmap_depth_points.py` fills sparse image-grid cells with single-view COLMAP points sampled from dense metric depth maps. Existing observed points count only when their camera depth agrees with the depth map under the inverse-depth threshold.
+
+```powershell
+uv run python tools\add_colmap_depth_points.py `
+  --model-dir <scene>\sparse\0 `
+  --depth-dir <scene>\omnidc_test\pred_512 `
+  --rgb-dir <scene>\images_2 `
+  --output-model-dir <scene>\sparse_depth_augmented\0 `
+  --cell-size 16 `
+  --min-points-per-cell 1
+```
+
+Use `--cell-size 8` for a denser target, `--max-points-per-image` for a conservative cap, and `--dry-run` to inspect counts without writing a model. The generated points have one image observation; future utilities can add multi-view observations when projected depth agreement is good.
 
 ## Inference Benchmarks
 

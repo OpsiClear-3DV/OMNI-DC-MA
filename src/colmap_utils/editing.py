@@ -185,6 +185,53 @@ def add_tracked_point(
     return edited_images, edited_points, stats
 
 
+def append_single_view_point(
+    images: Mapping[int, object],
+    points3d: Mapping[int, object],
+    *,
+    image_id: int,
+    point_id: int,
+    xy,
+    xyz,
+    rgb=(255, 255, 255),
+    error: float = 0.0,
+):
+    """Append a new 2D observation to one image and create a matching 3D point."""
+    image_id = int(image_id)
+    point_id = int(point_id)
+    if point_id in points3d:
+        raise ValueError(f"point id already exists: {point_id}")
+    if image_id not in images:
+        raise KeyError(f"image id not found: {image_id}")
+
+    image = images[image_id]
+    xys = np.asarray(image.xys, dtype=np.float64)
+    point_ids = np.asarray(image.point3D_ids, dtype=np.int64)
+    point2d_idx = int(len(point_ids))
+    xy_arr = np.asarray(xy, dtype=np.float64).reshape(1, 2)
+    new_xys = np.concatenate([xys, xy_arr], axis=0)
+    new_point_ids = np.concatenate([point_ids, np.asarray([point_id], dtype=np.int64)], axis=0)
+
+    edited_images = dict(images)
+    if hasattr(image, "_replace"):
+        edited_images[image_id] = image._replace(xys=new_xys, point3D_ids=new_point_ids)
+    else:
+        image.xys = new_xys
+        image.point3D_ids = new_point_ids
+        edited_images[image_id] = image
+
+    edited_points = dict(points3d)
+    edited_points[point_id] = Point3D(
+        id=point_id,
+        xyz=np.asarray(xyz, dtype=np.float64),
+        rgb=np.asarray(rgb, dtype=np.uint8),
+        error=float(error),
+        image_ids=np.asarray([image_id], dtype=np.int32),
+        point2D_idxs=np.asarray([point2d_idx], dtype=np.int32),
+    )
+    return edited_images, edited_points, EditStats(added_points=1, added_observations=1, touched_images=1)
+
+
 def validate_point_references(images: Mapping[int, object], points3d: Mapping[int, object]) -> list[str]:
     """Return human-readable model consistency problems."""
     problems: list[str] = []
