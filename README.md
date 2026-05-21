@@ -54,7 +54,7 @@ gh release download v0.1.0 -R OpsiClear-3DV/OMNI-DC-MA --dir release_assets
 For whole-scene processing on the bicycle-style COLMAP dataset, the current best throughput path is batch 16 at `--demo_max_size 512` with TensorRT, fixed-iteration capturable CG, CUDA graph replay, and the final-output representative interpolation path:
 
 ```powershell
-uv run python run_demo.py --gpus 0 --demo_rgb_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\images_2 --demo_depth_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\sparse_depth_all_images_2 --demo_out_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\pred_current_all_images_512 --demo_batch_size 16 --demo_max_size 512 --demo_outputs depth,vis --trt --capturable_inference --cg_fixed_iters 120 --demo_cuda_graph --anchor_cap_factor 2
+uv run python run_demo.py --gpus 0 --load_dav2 1 --num_resolution 3 --multi_resolution_learnable_gradients_weights uniform --GRU_iters 1 --optim_layer_input_clamp 1.0 --depth_activation_format exp --whiten_sparse_depths 1 --gru_internal_whiten_method median --backbone_mode rgbd --pred_confidence_input 1 --max_depth 300.0 --data_normalize_median 1 --demo_rgb_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\images_2 --demo_depth_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\sparse_depth_all_images_2_certain --demo_out_dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\pred_current_all_images_512_certain --demo_batch_size 16 --demo_max_size 512 --demo_outputs depth,vis --trt --capturable_inference --cg_fixed_iters 120 --demo_cuda_graph --anchor_cap_factor 2
 ```
 
 Use full resolution and batch 1 when the priority is maximum per-image fidelity rather than scene throughput:
@@ -68,7 +68,7 @@ uv run python run_demo.py --gpus 0 --demo_rgb <image.jpg> --demo_depth <sparse_d
 Convert a COLMAP sparse model into OMNI-DC sparse depth `.npy` files:
 
 ```powershell
-uv run python tools\generate_colmap_sparse_depth.py --model-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\sparse\0 --rgb-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\images_2 --out-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\sparse_depth_all_images_2
+uv run python tools\generate_colmap_sparse_depth.py --model-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\sparse\0 --rgb-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\images_2 --out-dir C:\Users\opsiclear\Desktop\Data_WS1\360_v2\bicycle\omnidc_test\sparse_depth_all_images_2_certain
 ```
 
 The tool uses COLMAP camera poses and point tracks, writes one full-size `float32` depth map per matched RGB image, and uses `0` as the invalid-depth sentinel. By default it keeps only higher-certainty points: track length at least 3 and COLMAP reprojection error at most 2 px.

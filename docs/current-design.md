@@ -19,7 +19,7 @@ Directory inference matches files by stem:
 
 ```text
 images_2/_DSC8679.JPG
-sparse_depth_all_images_2/_DSC8679.npy
+sparse_depth_all_images_2_certain/_DSC8679.npy
 ```
 
 ## Batch And Preview Path

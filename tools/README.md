@@ -7,7 +7,7 @@
 `generate_colmap_sparse_depth.py` converts a COLMAP sparse reconstruction into full-size sparse depth `.npy` maps:
 
 ```powershell
-uv run python tools\generate_colmap_sparse_depth.py --model-dir <scene>\sparse\0 --rgb-dir <scene>\images_2 --out-dir <scene>\omnidc_test\sparse_depth_all_images_2
+uv run python tools\generate_colmap_sparse_depth.py --model-dir <scene>\sparse\0 --rgb-dir <scene>\images_2 --out-dir <scene>\omnidc_test\sparse_depth_all_images_2_certain
 ```
 
 By default it uses the more certain COLMAP points only: `--min-track-length 3` and `--max-reproj-error 2`. Use `--no-quality-filter` only for comparison/debugging.
