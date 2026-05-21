@@ -19,6 +19,7 @@ from read_write_colmap_model import qvec2rotmat, read_model  # noqa: E402
 DEFAULT_IMAGE_EXTS = (".JPG", ".jpg", ".JPEG", ".jpeg", ".png", ".PNG")
 DEFAULT_MIN_TRACK_LENGTH = 3
 DEFAULT_MAX_REPROJ_ERROR = 2.0
+INVERSE_DEPTH_EPS = 1e-6
 
 
 def _parse_exts(values: list[str] | None) -> tuple[str, ...]:
@@ -75,14 +76,111 @@ def _quality_filter_label(args: argparse.Namespace) -> str:
     return f"track_length>={args.min_track_length}, reprojection_error<={args.max_reproj_error:g}px"
 
 
-def _depth_for_image(image, camera, points3d, args: argparse.Namespace) -> tuple[np.ndarray, dict[str, int]]:
+def _consistency_enabled(args: argparse.Namespace) -> bool:
+    return bool(args.consistency_depth_dir) and (
+        args.max_inv_depth_diff > 0 or args.max_inv_depth_rel_diff > 0
+    )
+
+
+def _consistency_filter_label(args: argparse.Namespace) -> str:
+    if not _consistency_enabled(args):
+        return "off"
+    checks: list[str] = []
+    if args.max_inv_depth_diff > 0:
+        checks.append(f"abs_inv_diff<={args.max_inv_depth_diff:g} 1/m")
+    if args.max_inv_depth_rel_diff > 0:
+        checks.append(f"rel_inv_diff<={args.max_inv_depth_rel_diff:g}")
+    align = "median inverse-depth scale aligned" if args.consistency_align_scale else "no scale alignment"
+    return f"{', '.join(checks)} against {args.consistency_depth_dir} ({align})"
+
+
+def _normalize_depth_map(array: np.ndarray, path: Path) -> np.ndarray:
+    depth = np.asarray(array)
+    if depth.ndim == 3:
+        if depth.shape[0] == 1:
+            depth = depth[0]
+        elif depth.shape[-1] == 1:
+            depth = depth[..., 0]
+        else:
+            raise ValueError(f"Expected a single-channel depth map in {path}, got shape {depth.shape}")
+    if depth.ndim != 2:
+        raise ValueError(f"Expected a 2D depth map in {path}, got shape {depth.shape}")
+    return depth.astype(np.float32, copy=False)
+
+
+def _load_consistency_depth(stem: str, args: argparse.Namespace) -> np.ndarray | None:
+    if not _consistency_enabled(args):
+        return None
+    path = Path(args.consistency_depth_dir) / f"{stem}.npy"
+    if not path.exists():
+        raise FileNotFoundError(f"Consistency depth map not found for {stem}: {path}")
+    return _normalize_depth_map(np.load(path), path)
+
+
+def _sample_depth_map(depth_map: np.ndarray, xys: np.ndarray, source_width: int, source_height: int) -> np.ndarray:
+    ref_height, ref_width = depth_map.shape
+    scale_x = (ref_width - 1) / max(source_width - 1, 1)
+    scale_y = (ref_height - 1) / max(source_height - 1, 1)
+    xs = np.rint(xys[:, 0] * scale_x).astype(np.int64)
+    ys = np.rint(xys[:, 1] * scale_y).astype(np.int64)
+    xs = np.clip(xs, 0, ref_width - 1)
+    ys = np.clip(ys, 0, ref_height - 1)
+    return depth_map[ys, xs].astype(np.float64, copy=False)
+
+
+def _aligned_ref_inverse_depth(inv_sfm: np.ndarray, inv_ref: np.ndarray, args: argparse.Namespace) -> np.ndarray:
+    if not args.consistency_align_scale:
+        return inv_ref
+    ratios = inv_sfm / np.maximum(inv_ref, INVERSE_DEPTH_EPS)
+    valid = np.isfinite(ratios) & (ratios > 0)
+    if not valid.any():
+        return inv_ref
+    scale = float(np.median(ratios[valid]))
+    if not np.isfinite(scale) or scale <= 0:
+        return inv_ref
+    return inv_ref * scale
+
+
+def _inverse_depth_consistency_mask(
+    sfm_depth: np.ndarray,
+    reference_depth: np.ndarray,
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, int]:
+    valid = (
+        np.isfinite(sfm_depth)
+        & np.isfinite(reference_depth)
+        & (sfm_depth > 0)
+        & (reference_depth > 0)
+    )
+    keep = np.zeros(sfm_depth.shape, dtype=bool)
+    if valid.any():
+        valid_indices = np.flatnonzero(valid)
+        inv_sfm = 1.0 / sfm_depth[valid]
+        inv_ref = 1.0 / reference_depth[valid]
+        inv_ref = _aligned_ref_inverse_depth(inv_sfm, inv_ref, args)
+        valid_keep = np.ones(inv_sfm.shape, dtype=bool)
+        diff = np.abs(inv_sfm - inv_ref)
+        if args.max_inv_depth_diff > 0:
+            valid_keep &= diff <= args.max_inv_depth_diff
+        if args.max_inv_depth_rel_diff > 0:
+            denom = np.maximum(np.maximum(np.abs(inv_sfm), np.abs(inv_ref)), INVERSE_DEPTH_EPS)
+            valid_keep &= (diff / denom) <= args.max_inv_depth_rel_diff
+        keep[valid_indices[valid_keep]] = True
+    invalid_reference = int((~valid).sum())
+    return keep, invalid_reference
+
+
+def _depth_for_image(image, stem: str, camera, points3d, args: argparse.Namespace) -> tuple[np.ndarray, dict[str, int]]:
     height = int(camera.height)
     width = int(camera.width)
     depth = np.full((height, width), np.inf, dtype=np.float32)
+    consistency_depth = _load_consistency_depth(stem, args)
     stats = {
         "track_refs": 0,
         "missing_points": 0,
         "rejected_quality": 0,
+        "rejected_consistency": 0,
+        "invalid_consistency_depth": 0,
         "kept_points": 0,
         "outside_or_behind": 0,
         "projected": 0,
@@ -124,8 +222,15 @@ def _depth_for_image(image, camera, points3d, args: argparse.Namespace) -> tuple
     xs = np.rint(xys[:, 0]).astype(np.int64)
     ys = np.rint(xys[:, 1]).astype(np.int64)
     inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height) & (z > 0)
+    stats["outside_or_behind"] = int(len(inside) - int(inside.sum()))
+    if consistency_depth is not None and inside.any():
+        inside_indices = np.flatnonzero(inside)
+        reference_depth = _sample_depth_map(consistency_depth, xys[inside], width, height)
+        consistency_keep, invalid_reference = _inverse_depth_consistency_mask(z[inside], reference_depth, args)
+        stats["invalid_consistency_depth"] = invalid_reference
+        stats["rejected_consistency"] = int((~consistency_keep).sum())
+        inside[inside_indices[~consistency_keep]] = False
     stats["projected"] = int(inside.sum())
-    stats["outside_or_behind"] = int(len(inside) - stats["projected"])
     if inside.any():
         flat = ys[inside] * width + xs[inside]
         np.minimum.at(depth.ravel(), flat, z[inside].astype(np.float32))
@@ -161,12 +266,15 @@ def generate(args: argparse.Namespace) -> None:
         "track_refs": 0,
         "missing_points": 0,
         "rejected_quality": 0,
+        "rejected_consistency": 0,
+        "invalid_consistency_depth": 0,
         "kept_points": 0,
         "outside_or_behind": 0,
         "projected": 0,
         "anchors": 0,
     }
     print(f"quality filter: {_quality_filter_label(args)}")
+    print(f"depth consistency filter: {_consistency_filter_label(args)}")
 
     for image in sorted(images.values(), key=lambda item: item.name):
         image_name = Path(image.name).name
@@ -183,7 +291,7 @@ def generate(args: argparse.Namespace) -> None:
             continue
 
         camera = cameras[image.camera_id]
-        depth, stats = _depth_for_image(image, camera, points3d, args)
+        depth, stats = _depth_for_image(image, stem, camera, points3d, args)
         for key, value in stats.items():
             total_stats[key] += value
         np.save(out_path, depth.astype(np.float32, copy=False))
@@ -194,7 +302,8 @@ def generate(args: argparse.Namespace) -> None:
             print(
                 f"{stem}: wrote {out_path.name} ({depth.shape[1]}x{depth.shape[0]}, "
                 f"{count} anchors; tracks={stats['track_refs']}, "
-                f"quality_rejected={stats['rejected_quality']})"
+                f"quality_rejected={stats['rejected_quality']}, "
+                f"consistency_rejected={stats['rejected_consistency']})"
             )
         if args.limit and written >= args.limit:
             break
@@ -207,6 +316,8 @@ def generate(args: argparse.Namespace) -> None:
         "point stats: "
         f"tracks={total_stats['track_refs']}, "
         f"quality_rejected={total_stats['rejected_quality']}, "
+        f"consistency_rejected={total_stats['rejected_consistency']}, "
+        f"consistency_invalid={total_stats['invalid_consistency_depth']}, "
         f"kept={total_stats['kept_points']}, "
         f"projected={total_stats['projected']}, "
         f"anchors={total_stats['anchors']}"
@@ -244,12 +355,44 @@ def main() -> None:
         action="store_true",
         help="Disable the default certain-point filter. Intended only for comparison/debugging.",
     )
+    parser.add_argument(
+        "--consistency-depth-dir",
+        help="Optional directory of reference dense depth .npy maps matched by RGB stem. "
+             "When paired with an inverse-depth threshold, projected SfM points that disagree are rejected.",
+    )
+    parser.add_argument(
+        "--max-inv-depth-diff",
+        type=float,
+        default=0.0,
+        help="Reject points with absolute inverse-depth disagreement above this threshold in 1/m. "
+             "Requires --consistency-depth-dir. 0 disables this check.",
+    )
+    parser.add_argument(
+        "--max-inv-depth-rel-diff",
+        type=float,
+        default=0.0,
+        help="Reject points with symmetric relative inverse-depth disagreement above this threshold. "
+             "For example, 0.25 rejects points differing by more than about 25%%. "
+             "Requires --consistency-depth-dir. 0 disables this check.",
+    )
+    parser.add_argument(
+        "--consistency-align-scale",
+        action="store_true",
+        help="Median-align reference inverse depths to SfM inverse depths per image before consistency checks. "
+             "Useful when the reference depth maps are only relatively scaled.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print one line per written image")
     args = parser.parse_args()
     if args.min_track_length < 1:
         raise ValueError("--min-track-length must be >= 1")
     if args.max_reproj_error <= 0:
         raise ValueError("--max-reproj-error must be > 0")
+    if args.max_inv_depth_diff < 0:
+        raise ValueError("--max-inv-depth-diff must be >= 0")
+    if args.max_inv_depth_rel_diff < 0:
+        raise ValueError("--max-inv-depth-rel-diff must be >= 0")
+    if (args.max_inv_depth_diff > 0 or args.max_inv_depth_rel_diff > 0) and not args.consistency_depth_dir:
+        raise ValueError("inverse-depth consistency thresholds require --consistency-depth-dir")
     generate(args)
 
 

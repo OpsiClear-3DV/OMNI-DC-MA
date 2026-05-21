@@ -32,7 +32,7 @@ Compared with the original research repo / earlier local pipeline, this version 
 - **Inference-first layout:** training datasets, losses, experiment folders, and generated outputs are not part of the repo surface.
 - **Repo-root launcher:** `python run_demo.py ...` works from the root instead of requiring manual `cd src` import setup.
 - **Metric-Anything prior:** replaces the older monocular prior path with an in-tree MA-depthmap prior wrapper.
-- **Higher-certainty sparse anchors:** the COLMAP converter defaults to `track_length >= 3` and `reprojection_error <= 2 px`, avoiding weaker two-view/high-error points.
+- **Higher-certainty sparse anchors:** the COLMAP converter defaults to `track_length >= 3` and `reprojection_error <= 2 px`, and can optionally reject anchors that disagree with a reference depth map in inverse depth.
 - **Batch directory processing:** basename-matched RGB/depth directories can be processed in one command.
 - **Fast 512 px preview path:** batch-16 preview inference supports TensorRT, fixed-iteration CG, CUDA graph replay, and final-output representative interpolation, giving about 24x higher per-image throughput than the original single-image OMNI-DC+MA path at the same 512-preview image size.
 - **Safer saved output:** anchor capping zeros unconstrained far-field predictions beyond `anchor_cap_factor * max(valid sparse depth)`.
@@ -119,6 +119,19 @@ Default point filtering keeps the more certain COLMAP tracks:
 
 - `--min-track-length 3`
 - `--max-reproj-error 2`
+
+To also reject SfM anchors that disagree too much with an existing dense depth map, add a matched `.npy` depth directory and an inverse-depth threshold:
+
+```powershell
+uv run python tools\generate_colmap_sparse_depth.py `
+  --model-dir C:\path\to\scene\sparse\0 `
+  --rgb-dir C:\path\to\scene\images_2 `
+  --out-dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain_consistent `
+  --consistency-depth-dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain `
+  --max-inv-depth-rel-diff 0.25
+```
+
+Use `--max-inv-depth-diff` for an absolute inverse-depth threshold in `1/m`. Add `--consistency-align-scale` when the reference maps are only relatively scaled.
 
 Use `--no-quality-filter` only for comparison/debugging.
 
