@@ -103,7 +103,7 @@ uv run python run_demo.py `
   --demo_rgb C:\path\to\scene\images_2\_DSC8679.JPG `
   --demo_depth C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain\_DSC8679.npy `
   --demo_out_dir C:\path\to\scene\omnidc_test\pred_single `
-  --demo_outputs depth,raw,vis,skymask `
+  --demo_outputs depth,raw,vis,skymask,colmap_mask `
   --anchor_cap_factor 1.25
 ```
 
@@ -122,7 +122,7 @@ uv run python run_demo.py `
   --demo_depth_dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain `
   --demo_out_dir C:\path\to\scene\omnidc_test\pred_512 `
   --demo_batch_size 16 --demo_max_size 512 `
-  --demo_outputs depth,vis `
+  --demo_outputs depth,vis,colmap_mask `
   --anchor_cap_factor 1.25
 ```
 
@@ -173,8 +173,11 @@ For each RGB stem:
 - `<stem>_raw.npy`: raw dense depth, saved when it differs from the capped output.
 - `<stem>.png`: color depth visualization.
 - `<image-name>.png`: optional sky/far-field mask when `skymask` is requested.
+- `scene/masks/<image-name>.png`: optional COLMAP-format mask when `colmap_mask` is requested.
 
 `anchor_cap_factor` controls the prior far-field mask and final output cap relative to the deepest sparse anchor. For example, `1.25` masks prior depths beyond `1.25 * max(valid sparse depth)`. Invalid output pixels are `0`.
+
+The `colmap_mask` output is compatible with COLMAP `ImageReader.mask_path`: white pixels are kept and black pixels are ignored. For an image such as `scene/images/frame.jpg`, the default export path is `scene/masks/frame.jpg.png`. Use `--demo_colmap_mask_dir C:\path\to\masks` to override the mask root. If inference runs at preview resolution, the mask is resized back to the original RGB image size with nearest-neighbor sampling.
 
 ## Model Assets
 
@@ -222,7 +225,7 @@ See [docs/optimization-notes.md](docs/optimization-notes.md) for benchmark setup
 
 ```powershell
 uv run ruff check run_demo.py src\demo.py src\config.py src\model\infer.py src\model\colmap_intrinsics.py src\model\final_reps.py tools tests
-uv run pytest tests\test_imports.py tests\test_colmap_intrinsics.py tests\test_colmap_sparse_depth_tool.py
+uv run pytest tests\test_imports.py tests\test_colmap_intrinsics.py tests\test_colmap_mask_output.py tests\test_colmap_sparse_depth_tool.py
 ```
 
 The bicycle end-to-end regression is optional and gated on local CUDA, weights, and the local bicycle dataset path.

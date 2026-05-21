@@ -51,3 +51,5 @@ This is a throughput optimization for sequence processing, not the default for a
 ## Anchor Cap
 
 The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The prior sky/far-field mask is computed in MA metric-depth space using COLMAP focal scaling when available, requested whenever output capping is enabled, and applied to the saved completed depth, not only to the optional `skymask` visualization.
+
+When `colmap_mask` is included in `--demo_outputs`, `demo.py` also writes a COLMAP `mask_path`-compatible PNG beside the image tree, e.g. `scene/images/frame.jpg` -> `scene/masks/frame.jpg.png`. These masks use COLMAP semantics: white pixels are kept, black pixels are ignored. Preview-resolution masks are resized back to the original RGB image size before saving.

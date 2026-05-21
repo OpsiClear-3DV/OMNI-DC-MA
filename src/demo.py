@@ -210,7 +210,51 @@ def _prepare_pair(args, rgb_path, depth_path):
     return rgb, dep, sparse
 
 
-def _write_outputs(args, outputs, cmap, save_sky, out_dir, rgb_path, sparse, depth_raw, sky):
+def _infer_colmap_mask_root(args, rgb_path):
+    explicit = getattr(args, "demo_colmap_mask_dir", None)
+    if explicit:
+        return Path(explicit)
+    rgb_dir = getattr(args, "demo_rgb_dir", None)
+    if rgb_dir:
+        return Path(rgb_dir).parent / "masks"
+    parent = Path(rgb_path).parent
+    if parent.name.lower().startswith("images"):
+        return parent.parent / "masks"
+    return parent / "masks"
+
+
+def _colmap_mask_path(args, rgb_path):
+    mask_root = _infer_colmap_mask_root(args, rgb_path)
+    rel = Path(rgb_path).name
+    rgb_dir = getattr(args, "demo_rgb_dir", None)
+    if rgb_dir:
+        try:
+            rel_path = Path(rgb_path).resolve().relative_to(Path(rgb_dir).resolve())
+            rel = str(rel_path)
+        except ValueError:
+            rel = Path(rgb_path).name
+    rel_path = Path(rel)
+    return mask_root / rel_path.parent / f"{rel_path.name}.png"
+
+
+def _write_colmap_mask(args, rgb_path, sky, depth_shape):
+    """Write COLMAP mask_path-compatible PNG: white = keep, black = ignore."""
+    from PIL import Image
+
+    sky_mask = np.zeros(depth_shape, dtype=bool) if sky is None else np.asarray(sky) > 0.5
+    colmap_mask = np.where(sky_mask, 0, 255).astype(np.uint8)
+    img = Image.fromarray(colmap_mask, mode="L")
+    with Image.open(rgb_path) as rgb_img:
+        rgb_size = rgb_img.size
+    if img.size != rgb_size:
+        img = img.resize(rgb_size, Image.Resampling.NEAREST)
+    path = _colmap_mask_path(args, rgb_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
+    return path
+
+
+def _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb_path, sparse, depth_raw, sky):
     if not np.isfinite(depth_raw).all():
         raise RuntimeError(
             f"non-finite depth for {rgb_path} (CG likely diverged - a "
@@ -270,6 +314,12 @@ def _write_outputs(args, outputs, cmap, save_sky, out_dir, rgb_path, sparse, dep
             out_dir / f"{Path(rgb_path).name}.png"
         )
         _profile_end(args, "write skymask png", t0)
+
+    if save_colmap_mask:
+        t0 = _profile_begin(args)
+        mask_path = _write_colmap_mask(args, rgb_path, sky, depth_pred.shape)
+        _profile_end(args, "write colmap mask", t0)
+        print(f"    wrote COLMAP mask: {mask_path}")
 
 
 def _prior_max_metric_depth(args, dep_b):
@@ -663,6 +713,7 @@ def _run_batch(
     cmap,
     request_sky,
     save_sky,
+    save_colmap_mask,
     out_dir,
     start_idx,
     total,
@@ -723,7 +774,7 @@ def _run_batch(
         depth_raw = depth_t[i, 0, :h, :w].cpu().numpy()
         sky = None if sky_t is None else sky_t[i, 0, :h, :w].cpu().numpy()
         _profile_end(args, "copy output to cpu", t0)
-        _write_outputs(args, outputs, cmap, save_sky, out_dir, rgb_path, sparse, depth_raw, sky)
+        _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb_path, sparse, depth_raw, sky)
 
 
 def test(args):
@@ -736,7 +787,7 @@ def test(args):
     out_dir = Path(args.demo_out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    known_outputs = {"depth", "raw", "vis", "skymask"}
+    known_outputs = {"depth", "raw", "vis", "skymask", "colmap_mask"}
     outputs = {o.strip() for o in args.demo_outputs.split(",") if o.strip()}
     unknown = outputs - known_outputs
     if unknown:
@@ -747,7 +798,8 @@ def test(args):
         raise ValueError("--demo_outputs selected nothing to write")
 
     save_sky = "skymask" in outputs
-    request_sky = save_sky or bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
+    save_colmap_mask = "colmap_mask" in outputs
+    request_sky = save_sky or save_colmap_mask or bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
     if "vis" in outputs:
         import matplotlib.pyplot as plt
 
@@ -765,7 +817,7 @@ def test(args):
     graph_cache = {}
 
     for start in range(0, len(pairs), batch_size):
-        _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, request_sky, save_sky,
+        _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, request_sky, save_sky, save_colmap_mask,
                    out_dir, start + 1, len(pairs), graph_cache, focal_lookup)
     if getattr(args, "demo_profile", False):
         _profile_print()

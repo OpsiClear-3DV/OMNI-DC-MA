@@ -503,7 +503,13 @@ parser.add_argument('--demo_outputs', type=str, default='depth,raw,vis,skymask',
                     help="Comma-separated subset of artifacts to write: "
                          "'depth' (<stem>.npy, capped), 'raw' (<stem>_raw.npy, "
                          "uncapped), 'vis' (<stem>.png, colormap), 'skymask' "
-                         "(<input filename>.png). Default writes all.")
+                         "(<input filename>.png), 'colmap_mask' "
+                         "(COLMAP mask_path-compatible image.ext.png). Default writes all.")
+parser.add_argument('--demo_colmap_mask_dir', type=str, default=None,
+                    help='Output directory for demo_outputs=colmap_mask. If omitted, '
+                         'infer a sibling "masks" directory from --demo_rgb_dir or '
+                         'from the single RGB image parent, e.g. scene/images/foo.jpg '
+                         '-> scene/masks/foo.jpg.png.')
 parser.add_argument('--demo_mono_cache_dir', type=str, default=None,
                     help='Optional directory for normalized MA-prior mono_dep '
                          'cache files. Hits skip the expensive prior and keep '
