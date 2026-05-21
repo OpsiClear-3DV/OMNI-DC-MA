@@ -103,8 +103,9 @@ uv run python run_demo.py `
   --demo_rgb C:\path\to\scene\images_2\_DSC8679.JPG `
   --demo_depth C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain\_DSC8679.npy `
   --demo_out_dir C:\path\to\scene\omnidc_test\pred_single `
-  --demo_outputs depth,raw,vis,skymask,colmap_mask `
-  --anchor_cap_factor 1.25
+  --demo_outputs depth,raw,vis `
+  --sky_mask --far_depth_factor 1.25 `
+  --save_sky_mask --save_colmap_mask
 ```
 
 Run a 512 px whole-scene preview:
@@ -122,8 +123,9 @@ uv run python run_demo.py `
   --demo_depth_dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain `
   --demo_out_dir C:\path\to\scene\omnidc_test\pred_512 `
   --demo_batch_size 16 --demo_max_size 512 `
-  --demo_outputs depth,vis,colmap_mask `
-  --anchor_cap_factor 1.25
+  --demo_outputs depth,vis `
+  --sky_mask --far_depth_factor 1.25 `
+  --save_colmap_mask
 ```
 
 For final per-image fidelity, prefer full resolution with batch size `1`. Use the 512 px path for fast scene sweeps and previews.
@@ -172,10 +174,12 @@ For each RGB stem:
 - `<stem>.npy`: completed metric depth after output capping/masking.
 - `<stem>_raw.npy`: raw dense depth, saved when it differs from the capped output.
 - `<stem>.png`: color depth visualization.
-- `<image-name>.png`: optional sky/far-field mask when `skymask` is requested.
-- `scene/masks/<image-name>.png`: optional COLMAP-format mask when `colmap_mask` is requested.
+- `<image-name>.png`: optional sky/far-field mask when `--save_sky_mask` or `skymask` is requested.
+- `scene/masks/<image-name>.png`: optional COLMAP-format mask when `--save_colmap_mask` or `colmap_mask` is requested.
 
-`anchor_cap_factor` controls the prior far-field mask and final output cap relative to the deepest sparse anchor. For example, `1.25` masks prior depths beyond `1.25 * max(valid sparse depth)`. Invalid output pixels are `0`.
+`--sky_mask` enables the MA prior sky/far mask. `--no_sky_mask` disables that whole path, forces `--far_depth_factor 0`, and skips sky-mask file outputs. `--far_depth_factor` controls the prior far-field mask and final output cap relative to the deepest sparse anchor. For example, `1.25` masks prior depths beyond `1.25 * max(valid sparse depth)`. The older `--anchor_cap_factor` name still works as an alias.
+
+By default, the sky/far mask is also applied to the saved completed depth. Use `--no_apply_sky_mask` when you want to export masks but keep completed depth unzeroed. Invalid output pixels are `0`.
 
 The `colmap_mask` output is compatible with COLMAP `ImageReader.mask_path`: white pixels are kept and black pixels are ignored. For an image such as `scene/images/frame.jpg`, the default export path is `scene/masks/frame.jpg.png`. Use `--demo_colmap_mask_dir C:\path\to\masks` to override the mask root. If inference runs at preview resolution, the mask is resized back to the original RGB image size with nearest-neighbor sampling.
 
@@ -204,7 +208,7 @@ See [docs/optimization-notes.md](docs/optimization-notes.md) for benchmark setup
 ## Limitations
 
 - Output quality depends on sparse-anchor quality and COLMAP scale.
-- Sky/far-field masking is based on MA metric depth relative to sparse anchors; it is not semantic sky segmentation.
+- Sky/far-field masking is based on MA metric depth relative to sparse anchors; it is not semantic sky segmentation. Use `--no_sky_mask` to turn it off.
 - `--demo_max_size 512` is a preview path and can soften fine details.
 - TensorRT engines are machine- and shape-specific.
 - Full-resolution batch-1 is the preferred setting for final outputs.

@@ -254,7 +254,19 @@ def _write_colmap_mask(args, rgb_path, sky, depth_shape):
     return path
 
 
-def _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb_path, sparse, depth_raw, sky):
+def _write_outputs(
+    args,
+    outputs,
+    cmap,
+    save_sky,
+    save_colmap_mask,
+    apply_sky_mask_to_depth,
+    out_dir,
+    rgb_path,
+    sparse,
+    depth_raw,
+    sky,
+):
     if not np.isfinite(depth_raw).all():
         raise RuntimeError(
             f"non-finite depth for {rgb_path} (CG likely diverged - a "
@@ -268,12 +280,15 @@ def _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb
     _profile_end(args, "anchor cap output", t0)
     print(f"    anchor cap @ {thr:.1f} m -> zeroed {n_capped} px "
           f"({100 * n_capped / depth_raw.size:.2f}%)")
-    t0 = _profile_begin(args)
-    depth_pred, n_sky_masked = apply_sky_mask(depth_pred, sky)
-    _profile_end(args, "sky mask output", t0)
-    if sky is not None:
-        print(f"    prior sky/far mask -> zeroed {n_sky_masked} px "
-              f"({100 * n_sky_masked / depth_raw.size:.2f}%)")
+    if apply_sky_mask_to_depth:
+        t0 = _profile_begin(args)
+        depth_pred, n_sky_masked = apply_sky_mask(depth_pred, sky)
+        _profile_end(args, "sky mask output", t0)
+        if sky is not None:
+            print(f"    prior sky/far mask -> zeroed {n_sky_masked} px "
+                  f"({100 * n_sky_masked / depth_raw.size:.2f}%)")
+    else:
+        n_sky_masked = 0
 
     stem = Path(rgb_path).stem
     capped_differs = n_capped > 0 or n_sky_masked > 0
@@ -320,6 +335,50 @@ def _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb
         mask_path = _write_colmap_mask(args, rgb_path, sky, depth_pred.shape)
         _profile_end(args, "write colmap mask", t0)
         print(f"    wrote COLMAP mask: {mask_path}")
+
+
+def _resolve_demo_output_options(args):
+    known_outputs = {"depth", "raw", "vis", "skymask", "colmap_mask"}
+    outputs = {o.strip() for o in args.demo_outputs.split(",") if o.strip()}
+    unknown = outputs - known_outputs
+    if unknown:
+        raise ValueError(
+            f"--demo_outputs: unknown {sorted(unknown)}; valid: {sorted(known_outputs)}"
+        )
+
+    if getattr(args, "save_sky_mask", False):
+        outputs.add("skymask")
+    if getattr(args, "save_colmap_mask", False):
+        outputs.add("colmap_mask")
+
+    sky_mask = getattr(args, "sky_mask", None)
+    if sky_mask is False:
+        args.anchor_cap_factor = 0.0
+        args.apply_sky_mask_to_depth = False
+        outputs.discard("skymask")
+        outputs.discard("colmap_mask")
+
+    if not outputs:
+        raise ValueError("--demo_outputs selected nothing to write")
+
+    save_sky = "skymask" in outputs
+    save_colmap_mask = "colmap_mask" in outputs
+    cap_enabled = bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
+
+    apply_opt = getattr(args, "apply_sky_mask_to_depth", None)
+    if sky_mask is True and not cap_enabled:
+        raise ValueError("--sky_mask requires --far_depth_factor > 0")
+    if apply_opt is True and not cap_enabled:
+        raise ValueError("--apply_sky_mask requires --far_depth_factor > 0")
+
+    if sky_mask is False:
+        apply_sky_mask_to_depth = False
+        request_sky = False
+    else:
+        apply_sky_mask_to_depth = cap_enabled if apply_opt is None else bool(apply_opt)
+        request_sky = save_sky or save_colmap_mask or apply_sky_mask_to_depth
+
+    return outputs, save_sky, save_colmap_mask, request_sky, apply_sky_mask_to_depth
 
 
 def _prior_max_metric_depth(args, dep_b):
@@ -714,6 +773,7 @@ def _run_batch(
     request_sky,
     save_sky,
     save_colmap_mask,
+    apply_sky_mask_to_depth,
     out_dir,
     start_idx,
     total,
@@ -774,10 +834,26 @@ def _run_batch(
         depth_raw = depth_t[i, 0, :h, :w].cpu().numpy()
         sky = None if sky_t is None else sky_t[i, 0, :h, :w].cpu().numpy()
         _profile_end(args, "copy output to cpu", t0)
-        _write_outputs(args, outputs, cmap, save_sky, save_colmap_mask, out_dir, rgb_path, sparse, depth_raw, sky)
+        _write_outputs(
+            args,
+            outputs,
+            cmap,
+            save_sky,
+            save_colmap_mask,
+            apply_sky_mask_to_depth,
+            out_dir,
+            rgb_path,
+            sparse,
+            depth_raw,
+            sky,
+        )
 
 
 def test(args):
+    outputs, save_sky, save_colmap_mask, request_sky, apply_sky_mask_to_depth = (
+        _resolve_demo_output_options(args)
+    )
+
     t0 = _profile_begin(args)
     net = load_model(args)
     _profile_end(args, "load model", t0)
@@ -787,19 +863,6 @@ def test(args):
     out_dir = Path(args.demo_out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    known_outputs = {"depth", "raw", "vis", "skymask", "colmap_mask"}
-    outputs = {o.strip() for o in args.demo_outputs.split(",") if o.strip()}
-    unknown = outputs - known_outputs
-    if unknown:
-        raise ValueError(
-            f"--demo_outputs: unknown {sorted(unknown)}; valid: {sorted(known_outputs)}"
-        )
-    if not outputs:
-        raise ValueError("--demo_outputs selected nothing to write")
-
-    save_sky = "skymask" in outputs
-    save_colmap_mask = "colmap_mask" in outputs
-    request_sky = save_sky or save_colmap_mask or bool(getattr(args, "anchor_cap_factor", 0.0) > 0.0)
     if "vis" in outputs:
         import matplotlib.pyplot as plt
 
@@ -817,8 +880,22 @@ def test(args):
     graph_cache = {}
 
     for start in range(0, len(pairs), batch_size):
-        _run_batch(net, args, pairs[start:start + batch_size], outputs, cmap, request_sky, save_sky, save_colmap_mask,
-                   out_dir, start + 1, len(pairs), graph_cache, focal_lookup)
+        _run_batch(
+            net,
+            args,
+            pairs[start:start + batch_size],
+            outputs,
+            cmap,
+            request_sky,
+            save_sky,
+            save_colmap_mask,
+            apply_sky_mask_to_depth,
+            out_dir,
+            start + 1,
+            len(pairs),
+            graph_cache,
+            focal_lookup,
+        )
     if getattr(args, "demo_profile", False):
         _profile_print()
 

@@ -48,8 +48,10 @@ Missing or failed engines fall back to eager PyTorch. Export helpers live in `to
 
 This is a throughput optimization for sequence processing, not the default for arbitrary one-off images.
 
-## Anchor Cap
+## Sky/Far Mask
 
-The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `anchor_cap_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The prior sky/far-field mask is computed in MA metric-depth space using COLMAP focal scaling when available, requested whenever output capping is enabled, and applied to the saved completed depth, not only to the optional `skymask` visualization.
+The MA prior can extrapolate unconstrained far-field depth beyond the sparse SfM anchors. `apply_anchor_cap` caps predictions above `far_depth_factor * max(valid sparse depth)` and writes those pixels as `0`, preserving the same invalid-depth sentinel used by sparse inputs. The older CLI name, `anchor_cap_factor`, remains an alias. The prior sky/far-field mask is computed in MA metric-depth space using COLMAP focal scaling when available, requested whenever output capping is enabled, and applied to the saved completed depth by default.
 
-When `colmap_mask` is included in `--demo_outputs`, `demo.py` also writes a COLMAP `mask_path`-compatible PNG beside the image tree, e.g. `scene/images/frame.jpg` -> `scene/masks/frame.jpg.png`. These masks use COLMAP semantics: white pixels are kept, black pixels are ignored. Preview-resolution masks are resized back to the original RGB image size before saving.
+Use `--sky_mask` or `--no_sky_mask` to force the feature on or off. `--no_sky_mask` also forces `--far_depth_factor 0` and skips sky-mask file outputs. Use `--no_apply_sky_mask` to compute/export masks without zeroing the saved completed depth.
+
+When `--save_colmap_mask` or `colmap_mask` is requested, `demo.py` also writes a COLMAP `mask_path`-compatible PNG beside the image tree, e.g. `scene/images/frame.jpg` -> `scene/masks/frame.jpg.png`. These masks use COLMAP semantics: white pixels are kept, black pixels are ignored. Preview-resolution masks are resized back to the original RGB image size before saving.

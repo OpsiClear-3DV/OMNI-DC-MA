@@ -19,6 +19,21 @@ def test_config_parses_defaults():
     assert config.args.depth_activation_format in ("exp", "linear")
 
 
+def test_config_parses_intuitive_sky_cli_aliases():
+    import config
+
+    parsed = config.parser.parse_args([
+        "--gpus", "0",
+        "--far_depth_factor", "1.25",
+        "--save_colmap_mask",
+        "--no_apply_sky_mask",
+    ])
+
+    assert parsed.anchor_cap_factor == 1.25
+    assert parsed.save_colmap_mask
+    assert parsed.apply_sky_mask_to_depth is False
+
+
 def test_ma_depthmap_prior_importable():
     # Importing must not require weights (those load lazily in __init__).
     from ma_depthmap import MADepthMapPrior
