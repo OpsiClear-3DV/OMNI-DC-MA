@@ -8,7 +8,7 @@
   <img src="docs/assets/bicycle_sparse_vs_completed.png" alt="Sparse bicycle COLMAP/SfM depth anchors projected into the image plane next to the completed OMNI-DC-MA depth map" width="100%">
 </p>
 
-<p align="center"><em>Example bicycle frame: higher-certainty sparse metric SfM anchors projected to 2D as the input depth signal, compared with the completed 512 px OMNI-DC-MA depth map.</em></p>
+<p align="center"><em>Example bicycle frame: globally filtered sparse metric SfM anchors projected to 2D as the input depth signal, compared with the regenerated 512 px OMNI-DC-MA depth map.</em></p>
 
 ## What This Repo Is For
 
@@ -128,11 +128,14 @@ uv run python tools\generate_colmap_sparse_depth.py `
   --rgb-dir C:\path\to\scene\images_2 `
   --out-dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain_consistent `
   --reference-depth-dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain `
-  --max-relative-inverse-depth-error 0.25
+  --max-relative-inverse-depth-error 0.25 `
+  --drop-inconsistent-points
 ```
 
 Use `--max-inverse-depth-error` for an absolute inverse-depth threshold in `1/m`. Add `--align-reference-depth-scale` when the reference maps are only relatively scaled.
 By default, only the failing point observation is removed; add `--drop-inconsistent-points` to remove that COLMAP 3D point from every selected output view if any observation fails.
+
+The checked-in bicycle example was regenerated with `--max-relative-inverse-depth-error 0.25 --drop-inconsistent-points`, using `pred_current_all_images_512_certain` as the reference. It wrote `sparse_depth_all_images_2_certain_ref25_global` with 194 maps, 219 globally rejected COLMAP points, and 117,331 sparse anchor pixels.
 
 Use `--no-quality-filter` only for comparison/debugging.
 
@@ -168,8 +171,8 @@ uv run python run_demo.py `
   --gru_internal_whiten_method median --backbone_mode rgbd `
   --pred_confidence_input 1 --max_depth 300.0 --data_normalize_median 1 `
   --demo_rgb_dir C:\path\to\scene\images_2 `
-  --demo_depth_dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain `
-  --demo_out_dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain `
+  --demo_depth_dir C:\path\to\scene\omnidc_test\sparse_depth_all_images_2_certain_ref25_global `
+  --demo_out_dir C:\path\to\scene\omnidc_test\pred_current_all_images_512_certain_ref25_global `
   --demo_batch_size 16 --demo_max_size 512 `
   --demo_outputs depth,vis `
   --trt --capturable_inference --cg_fixed_iters 120 --demo_cuda_graph `
